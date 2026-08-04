@@ -321,9 +321,7 @@ def table_domain(
     return max(lo - margin, 0.0), min(hi + margin, 1.0)
 
 
-def ocp_table_for(
-    model, side: str, table_points: int = 257, max_c_rate: float = 3.0
-) -> OCPTable:
+def ocp_table_for(model, side: str, table_points: int = 257, max_c_rate: float = 3.0) -> OCPTable:
     """Tabulate one electrode's potential over its reachable surface range."""
     el = model.parameters._electrode(side)
     lo, hi = table_domain(model, side, max_c_rate)

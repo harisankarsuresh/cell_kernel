@@ -72,8 +72,11 @@ def hppc_pulses(
 
 
 def cccv_charge(
-    capacity: float, rate: float = 1.0, cc_duration: float = 2400.0, taper: float = 1800.0,
-    dt: float = 1.0
+    capacity: float,
+    rate: float = 1.0,
+    cc_duration: float = 2400.0,
+    taper: float = 1800.0,
+    dt: float = 1.0,
 ) -> np.ndarray:
     """A constant-current, tapering-current charge profile.
 
@@ -146,6 +149,4 @@ def synthetic_drive_cycle(
     current = capacity * np.where(
         signal >= 0.0, peak_discharge_rate * signal, peak_regen_rate * signal
     )
-    return np.clip(
-        current, -peak_regen_rate * capacity, peak_discharge_rate * capacity
-    )
+    return np.clip(current, -peak_regen_rate * capacity, peak_discharge_rate * capacity)

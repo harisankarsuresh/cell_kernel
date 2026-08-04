@@ -37,8 +37,10 @@ def main() -> None:
     measured = truth["voltage"] + rng.normal(0.0, NOISE_STD, truth["voltage"].size)
 
     print(f"Cell: {cell.name}, {cell.nominal_capacity} Ah")
-    print(f"Profile: {current.size} s, peak {np.max(np.abs(current)):.1f} A, "
-          f"net {np.sum(current) * model.dt / 3600.0:.3f} Ah")
+    print(
+        f"Profile: {current.size} s, peak {np.max(np.abs(current)):.1f} A, "
+        f"net {np.sum(current) * model.dt / 3600.0:.3f} Ah"
+    )
     print(f"True state of charge: {truth['soc'][0]:.3f} -> {truth['soc'][-1]:.3f}")
     print(f"Seeded at {SEEDED_SOC:.2f}, an error of {SEEDED_SOC - TRUE_SOC:+.2f}")
     print(f"Voltage noise: {NOISE_STD * 1e3:.1f} mV rms")
@@ -60,8 +62,10 @@ def main() -> None:
 
     print(f"{'estimator':<22}{'final error':>14}{'rmse, last 10 min':>20}")
     print("-" * 56)
-    print(f"{'open-loop counting':<22}{abs(open_loop[-1] - truth['soc'][-1]):>14.5f}"
-          f"{float(np.sqrt(np.mean((open_loop[settled] - truth['soc'][settled]) ** 2))):>20.5f}")
+    print(
+        f"{'open-loop counting':<22}{abs(open_loop[-1] - truth['soc'][-1]):>14.5f}"
+        f"{float(np.sqrt(np.mean((open_loop[settled] - truth['soc'][settled]) ** 2))):>20.5f}"
+    )
 
     results = {}
     for name, estimator in candidates.items():
@@ -80,8 +84,10 @@ def main() -> None:
     print("cautious about a model that is better than advertised; much more means")
     print("the noise model is understated and the estimate is over-confident.")
     print()
-    print(f"Reported uncertainty: {best['soc_std'][0]:.4f} at the start, "
-          f"{best['soc_std'][-1]:.4f} at the end.")
+    print(
+        f"Reported uncertainty: {best['soc_std'][0]:.4f} at the start, "
+        f"{best['soc_std'][-1]:.4f} at the end."
+    )
 
     try:
         plot(truth, results, open_loop, model.dt)

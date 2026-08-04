@@ -180,9 +180,7 @@ class DiscreteStateSpace:
         y = self.C @ x + self.D.reshape(-1) * float(flux)
         return float(y[0]), float(y[1])
 
-    def simulate(
-        self, c_init: float, flux: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def simulate(self, c_init: float, flux: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Replay a flux sequence and return ``(c_surf, c_bar)`` trajectories.
 
         The returned arrays have the same length as ``flux``; entry ``k`` is the

@@ -84,9 +84,7 @@ class ECM(CellModel):
             raise ValueError("capacity must be positive")
 
         self._decay = np.array([np.exp(-self.dt / t) for _, t in self.rc_pairs])
-        self._gain = np.array(
-            [r * (1.0 - np.exp(-self.dt / t)) for r, t in self.rc_pairs]
-        )
+        self._gain = np.array([r * (1.0 - np.exp(-self.dt / t)) for r, t in self.rc_pairs])
         self._soc_per_amp_second = 1.0 / (3600.0 * self.capacity)
 
     @property

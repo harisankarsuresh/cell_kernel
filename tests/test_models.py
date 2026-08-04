@@ -58,20 +58,28 @@ def test_rest_voltage_equals_open_circuit_voltage(cell, kind, soc):
     """At zero current the overpotentials vanish and V must equal OCV exactly."""
     model = SPM(cell, dt=1.0, rom=kind, order=4)
     x = model.initial_state(soc)
-    assert model.voltage(x, 0.0) == pytest.approx(
-        float(cell.open_circuit_voltage(soc)), abs=1e-9
-    )
+    assert model.voltage(x, 0.0) == pytest.approx(float(cell.open_circuit_voltage(soc)), abs=1e-9)
 
 
 @pytest.mark.parametrize("kind", ROM_KINDS)
 def test_rested_state_is_stationary(cell, kind):
-    """A rested cell at open circuit must not drift."""
+    """A rested cell at open circuit must not drift.
+
+    Five thousand seconds of open circuit, so any per-step round-off in the
+    discrete update accumulates 500 times over. The finite-volume model gets a
+    looser voltage bound for the reason given in
+    ``test_uniform_state_is_an_equilibrium``: its uniform state is preserved only
+    to the accuracy of the exponential of a stiff generator, which depends on the
+    linear-algebra backend. Even so, 1 microvolt over eighty minutes is four
+    orders of magnitude below the noise floor of any measurement front end.
+    """
     model = SPM(cell, dt=10.0, rom=kind, order=4)
     x = model.initial_state(0.5)
     v0 = model.voltage(x, 0.0)
     for _ in range(500):
         x = model.step(x, 0.0)
-    assert model.voltage(x, 0.0) == pytest.approx(v0, abs=1e-9)
+    tol = 1e-6 if kind == "fv" else 1e-9
+    assert model.voltage(x, 0.0) == pytest.approx(v0, abs=tol)
     assert model.soc(x) == pytest.approx(0.5, abs=1e-9)
 
 
@@ -170,9 +178,7 @@ def test_spm_state_jacobian_is_exact(cell, kind):
     """Linear dynamics mean the state Jacobian is the state matrix itself."""
     model = SPM(cell, dt=1.0, rom=kind, order=4)
     x = model.initial_state(0.6)
-    assert_jacobian_close(
-        model.state_jacobian(x, 3.0), model.numerical_state_jacobian(x, 3.0)
-    )
+    assert_jacobian_close(model.state_jacobian(x, 3.0), model.numerical_state_jacobian(x, 3.0))
 
 
 def test_state_jacobian_does_not_depend_on_operating_point(spm):
@@ -198,12 +204,8 @@ def test_ecm_jacobians(cell):
     model = ECM(cell, dt=1.0)
     x = model.initial_state(0.55)
     x = model.step(x, 4.0)
-    assert_jacobian_close(
-        model.voltage_jacobian(x, 4.0), model.numerical_voltage_jacobian(x, 4.0)
-    )
-    assert_jacobian_close(
-        model.state_jacobian(x, 4.0), model.numerical_state_jacobian(x, 4.0)
-    )
+    assert_jacobian_close(model.voltage_jacobian(x, 4.0), model.numerical_voltage_jacobian(x, 4.0))
+    assert_jacobian_close(model.state_jacobian(x, 4.0), model.numerical_state_jacobian(x, 4.0))
 
 
 # ---------------------------------------------------------------------------

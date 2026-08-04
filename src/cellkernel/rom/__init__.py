@@ -77,6 +77,5 @@ def make_rom(
     if key in {"poly", "polynomial"}:
         return PolynomialDiffusion(radius, diffusivity)
     raise ValueError(
-        f"unknown reduced-order model {kind!r}; expected one of "
-        "'pade', 'spectral', 'fv', 'poly'"
+        f"unknown reduced-order model {kind!r}; expected one of 'pade', 'spectral', 'fv', 'poly'"
     )

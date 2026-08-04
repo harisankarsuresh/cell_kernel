@@ -131,9 +131,7 @@ def _arrhenius(activation_energy: float, temperature: float, reference: float) -
     """Ratio of a rate at ``temperature`` to its value at ``reference``."""
     if activation_energy == 0.0:
         return 1.0
-    return float(
-        np.exp(activation_energy / GAS_CONSTANT * (1.0 / reference - 1.0 / temperature))
-    )
+    return float(np.exp(activation_energy / GAS_CONSTANT * (1.0 / reference - 1.0 / temperature)))
 
 
 @dataclass
@@ -224,9 +222,9 @@ class CellParameters:
     def open_circuit_voltage(self, soc: np.ndarray) -> np.ndarray:
         """Equilibrium terminal voltage at a given state of charge."""
         soc = np.asarray(soc, dtype=float)
-        return np.asarray(
-            self.positive.ocp(self.positive.stoichiometry(soc))
-        ) - np.asarray(self.negative.ocp(self.negative.stoichiometry(soc)))
+        return np.asarray(self.positive.ocp(self.positive.stoichiometry(soc))) - np.asarray(
+            self.negative.ocp(self.negative.stoichiometry(soc))
+        )
 
     def ocv_derivative(self, soc: np.ndarray) -> np.ndarray:
         """``dOCV/dSOC`` in volts per unit state of charge.
@@ -240,9 +238,10 @@ class CellParameters:
         neg, pos = self.negative, self.positive
         dxn = neg.stoich_at_100_soc - neg.stoich_at_0_soc
         dxp = pos.stoich_at_100_soc - pos.stoich_at_0_soc
-        return np.asarray(pos.ocp_derivative(pos.stoichiometry(soc))) * dxp - np.asarray(
-            neg.ocp_derivative(neg.stoichiometry(soc))
-        ) * dxn
+        return (
+            np.asarray(pos.ocp_derivative(pos.stoichiometry(soc))) * dxp
+            - np.asarray(neg.ocp_derivative(neg.stoichiometry(soc))) * dxn
+        )
 
     def soc_from_ocv(self, voltage: float) -> float:
         """Invert the open-circuit voltage curve for state of charge.
@@ -380,12 +379,8 @@ def balanced_stoichiometry_window(
         )
 
     lo, hi = 1e-3, 1.0 - 1e-3
-    guess = np.clip(
-        np.array([0.03, 0.03 + capacity / qn, 0.95, 0.95 - capacity / qp]), lo, hi
-    )
-    solution = least_squares(
-        residual, guess, bounds=(lo, hi), xtol=1e-14, ftol=1e-14, gtol=1e-14
-    )
+    guess = np.clip(np.array([0.03, 0.03 + capacity / qn, 0.95, 0.95 - capacity / qp]), lo, hi)
+    solution = least_squares(residual, guess, bounds=(lo, hi), xtol=1e-14, ftol=1e-14, gtol=1e-14)
     xn0, xn100, xp0, xp100 = (float(v) for v in solution.x)
     achieved = residual(solution.x)
     if np.max(np.abs(achieved)) > 1e-6:

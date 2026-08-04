@@ -74,9 +74,11 @@ def main() -> None:
     truth_model = SPM(aged_cell(cell, TRUE_RETENTION), dt=1.0, rom="pade", order=3)
 
     print(f"Cell: {cell.name}, nominal {cell.nominal_capacity} Ah")
-    print(f"Injected ageing: retention {TRUE_RETENTION:.2f} "
-          f"({truth_model.parameters.nominal_capacity:.2f} Ah remaining), "
-          f"resistance +{TRUE_RESISTANCE_GROWTH * 1e3:.0f} mOhm")
+    print(
+        f"Injected ageing: retention {TRUE_RETENTION:.2f} "
+        f"({truth_model.parameters.nominal_capacity:.2f} Ah remaining), "
+        f"resistance +{TRUE_RESISTANCE_GROWTH * 1e3:.0f} mOhm"
+    )
     print("The filter is given the nominal parameters and has to discover both.")
     print()
 
@@ -91,19 +93,23 @@ def main() -> None:
     estimator.run(current, measured)
     health = estimator.health()
 
-    print(f"Drive cycle, {current.size / 60:.0f} minutes, state of charge "
-          f"{truth['soc'][0]:.3f} -> {truth['soc'][-1]:.3f}")
-    print(f"  resistance growth  {health.resistance_growth * 1e3:7.2f} "
-          f"+/- {health.resistance_std * 1e3:.2f} mOhm   "
-          f"(true {TRUE_RESISTANCE_GROWTH * 1e3:.0f})")
-    print(f"  capacity retention {health.capacity_retention:7.4f} "
-          f"+/- {health.capacity_std:.4f}          (true {TRUE_RETENTION:.2f})")
+    print(
+        f"Drive cycle, {current.size / 60:.0f} minutes, state of charge "
+        f"{truth['soc'][0]:.3f} -> {truth['soc'][-1]:.3f}"
+    )
+    print(
+        f"  resistance growth  {health.resistance_growth * 1e3:7.2f} "
+        f"+/- {health.resistance_std * 1e3:.2f} mOhm   "
+        f"(true {TRUE_RESISTANCE_GROWTH * 1e3:.0f})"
+    )
+    print(
+        f"  capacity retention {health.capacity_retention:7.4f} "
+        f"+/- {health.capacity_std:.4f}          (true {TRUE_RETENTION:.2f})"
+    )
     print()
 
     # --- uninformative profile: brief pulses that barely move the charge
-    pulses = np.concatenate(
-        [constant_current(10.0, 5.0, model.dt), rest(30.0, model.dt)] * 6
-    )
+    pulses = np.concatenate([constant_current(10.0, 5.0, model.dt), rest(30.0, model.dt)] * 6)
     pulse_measured, pulse_truth = aged_measurement(truth_model, pulses, soc0=0.6, seed=2)
     swing = abs(pulse_truth["soc"][0] - pulse_truth["soc"][-1])
 
@@ -113,11 +119,15 @@ def main() -> None:
     pulse_health = pulse_filter.health()
 
     print(f"Short pulse train, {pulses.size} s, charge swing only {swing * 100:.2f}%")
-    print(f"  resistance growth  {pulse_health.resistance_growth * 1e3:7.2f} "
-          f"+/- {pulse_health.resistance_std * 1e3:.2f} mOhm   "
-          f"(true {TRUE_RESISTANCE_GROWTH * 1e3:.0f})")
-    print(f"  capacity retention {pulse_health.capacity_retention:7.4f} "
-          f"+/- {pulse_health.capacity_std:.4f}          (true {TRUE_RETENTION:.2f})")
+    print(
+        f"  resistance growth  {pulse_health.resistance_growth * 1e3:7.2f} "
+        f"+/- {pulse_health.resistance_std * 1e3:.2f} mOhm   "
+        f"(true {TRUE_RESISTANCE_GROWTH * 1e3:.0f})"
+    )
+    print(
+        f"  capacity retention {pulse_health.capacity_retention:7.4f} "
+        f"+/- {pulse_health.capacity_std:.4f}          (true {TRUE_RETENTION:.2f})"
+    )
     print()
     print("Reading these numbers honestly:")
     print()

@@ -171,8 +171,14 @@ def test_mirror_covariance_stays_symmetric_and_positive():
 
 def test_generate_writes_expected_files(tmp_path):
     project = generate(build(), tmp_path / "gen", precision="float")
-    for name in ("cellkernel_estimator.h", "cellkernel_estimator.c", "ck_harness.c",
-                 "Makefile", "CMakeLists.txt", "BUDGET.txt"):
+    for name in (
+        "cellkernel_estimator.h",
+        "cellkernel_estimator.c",
+        "ck_harness.c",
+        "Makefile",
+        "CMakeLists.txt",
+        "BUDGET.txt",
+    ):
         assert (project.directory / name).is_file(), name
     source = (project.directory / "cellkernel_estimator.c").read_text()
     assert "malloc" not in source, "generated code must not allocate"
@@ -191,12 +197,8 @@ def test_generated_constants_round_trip_exactly(tmp_path):
 def test_float_and_double_differ_only_in_typedef(tmp_path):
     single = generate(build(), tmp_path / "f", precision="float")
     double = generate(build(), tmp_path / "d", precision="double")
-    assert "typedef float ck_real_t;" in (
-        single.directory / "cellkernel_estimator.h"
-    ).read_text()
-    assert "typedef double ck_real_t;" in (
-        double.directory / "cellkernel_estimator.h"
-    ).read_text()
+    assert "typedef float ck_real_t;" in (single.directory / "cellkernel_estimator.h").read_text()
+    assert "typedef double ck_real_t;" in (double.directory / "cellkernel_estimator.h").read_text()
     assert single.budget.ram_bytes * 2 == double.budget.ram_bytes
 
 

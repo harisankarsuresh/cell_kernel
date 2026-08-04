@@ -53,9 +53,7 @@ def pade_coefficients(m: int, n: int) -> tuple[list[Fraction], list[Fraction]]:
         rhs.append(-h[k])
 
     denom = [Fraction(1)] + _solve_exact(rows, rhs)
-    numer = [
-        sum(denom[j] * h[k - j] for j in range(0, min(k, n) + 1)) for k in range(m + 1)
-    ]
+    numer = [sum(denom[j] * h[k - j] for j in range(0, min(k, n) + 1)) for k in range(m + 1)]
     return numer, denom
 
 
@@ -67,8 +65,7 @@ def _solve_exact(rows: list[list[Fraction]], rhs: list[Fraction]) -> list[Fracti
         pivot = next((r for r in range(col, n) if aug[r][col] != 0), None)
         if pivot is None:
             raise np.linalg.LinAlgError(
-                "Pade system is singular; the requested order is not attainable "
-                "for this function"
+                "Pade system is singular; the requested order is not attainable for this function"
             )
         aug[col], aug[pivot] = aug[pivot], aug[col]
         scale = aug[col][col]

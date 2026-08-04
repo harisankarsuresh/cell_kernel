@@ -251,9 +251,7 @@ class OCPTable:
         return float(self.values[i] + frac * (self.values[i + 1] - self.values[i]))
 
 
-def tabulate(
-    fn: OCPFunction, n: int = 257, sto_min: float = 0.0, sto_max: float = 1.0
-) -> OCPTable:
+def tabulate(fn: OCPFunction, n: int = 257, sto_min: float = 0.0, sto_max: float = 1.0) -> OCPTable:
     """Sample ``fn`` onto a uniform grid and measure the interpolation error.
 
     Parameters

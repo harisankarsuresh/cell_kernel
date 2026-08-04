@@ -137,9 +137,7 @@ class EKF(Estimator):
         self.x = estimate
         identity = np.eye(model.n_states)
         KH = K @ H
-        self.P = symmetrise(
-            (identity - KH) @ self.P @ (identity - KH).T + K @ K.T * self.R
-        )
+        self.P = symmetrise((identity - KH) @ self.P @ (identity - KH).T + K @ K.T * self.R)
 
         corrected = model.outputs(self.x, current)
         soc_std = self.soc_std()
@@ -241,6 +239,4 @@ class EKF(Estimator):
         direction = np.asarray(model.soc_direction()).reshape(-1)
         samples_per_hour = 3600.0 / model.dt
         drift_variance = soc_drift_per_hour**2 / samples_per_hour
-        return current_std**2 * np.outer(b, b) + drift_variance * np.outer(
-            direction, direction
-        )
+        return current_std**2 * np.outer(b, b) + drift_variance * np.outer(direction, direction)

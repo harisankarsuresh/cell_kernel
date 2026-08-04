@@ -16,8 +16,9 @@ _TEMPERATURE_KEYS = ("temperature", "temp", "aux_temperature", "t_cell", "temper
 
 
 def _match(header: list[str], candidates: tuple[str, ...]) -> str | None:
-    normalised = {h.strip().lower().replace(" ", "_").replace("[", "(").replace("]", ")"): h
-                  for h in header}
+    normalised = {
+        h.strip().lower().replace(" ", "_").replace("[", "(").replace("]", ")"): h for h in header
+    }
     for key in candidates:
         if key in normalised:
             return normalised[key]
@@ -83,8 +84,7 @@ def load_csv(
         missing = [k for k in ("time", "current", "voltage") if cols[k] is None]
         if missing:
             raise ValueError(
-                f"{path}: could not find column(s) for {', '.join(missing)}; "
-                f"header is {header}"
+                f"{path}: could not find column(s) for {', '.join(missing)}; header is {header}"
             )
         rows = list(reader)
 
@@ -110,9 +110,7 @@ def load_csv(
     if current_sign == "charge-positive":
         data["current"] = -data["current"]
 
-    finite = np.isfinite(data["time"]) & np.isfinite(data["current"]) & np.isfinite(
-        data["voltage"]
-    )
+    finite = np.isfinite(data["time"]) & np.isfinite(data["current"]) & np.isfinite(data["voltage"])
     for key in list(data):
         data[key] = data[key][finite]
 

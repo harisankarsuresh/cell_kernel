@@ -61,8 +61,7 @@ class ResourceBudget:
             f"{self.adds_per_step} add, {self.divides_per_step} div, "
             f"{self.sqrts_per_step} sqrt, {self.logs_per_step} log",
             f"modelled cycles      {self.estimated_cycles}",
-            "estimated time       "
-            + ", ".join(f"{mhz} MHz: {t:.1f} us" for mhz, t in us.items()),
+            "estimated time       " + ", ".join(f"{mhz} MHz: {t:.1f} us" for mhz, t in us.items()),
             f"OCP table points     {self.table_points[0]} / {self.table_points[1]}",
             f"OCP table error      {self.table_error_volts * 1e3:.3f} mV",
         ]

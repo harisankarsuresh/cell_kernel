@@ -14,8 +14,11 @@ import numpy as np
 from cellkernel.params import chen2020_nmc811_graphite
 from cellkernel.rom import make_rom
 
-BANDS = {"quasi-steady (<=1)": (-2.0, 0.0), "hour-scale (<=10)": (-2.0, 1.0),
-         "pulse (<=100)": (-2.0, 2.0)}
+BANDS = {
+    "quasi-steady (<=1)": (-2.0, 0.0),
+    "hour-scale (<=10)": (-2.0, 1.0),
+    "pulse (<=100)": (-2.0, 2.0),
+}
 
 
 def worst_error(rom, lo: float, hi: float, points: int = 60) -> float:
@@ -68,8 +71,14 @@ def main() -> None:
     print()
     print(f"{'model':<12}{'states':>7}{'offset':>16}{'relative error':>18}")
     print("-" * 53)
-    for kind, order in [("poly", 2), ("spectral", 4), ("pade", 3), ("pade", 6), ("fv", 10),
-                        ("fv", 40)]:
+    for kind, order in [
+        ("poly", 2),
+        ("spectral", 4),
+        ("pade", 3),
+        ("pade", 6),
+        ("fv", 10),
+        ("fv", 40),
+    ]:
         rom = make_rom(kind, radius, diffusivity, order=order)
         offset = steady_offset(rom, flux)
         error = abs(offset - exact_offset) / exact_offset
@@ -99,18 +108,25 @@ def plot(radius: float, diffusivity: float) -> None:
     omega = dimensionless / theta
 
     fig, (ax_mag, ax_err) = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
-    exact = np.array([make_rom("pade", radius, diffusivity, 3).exact_transfer_function(1j * w)
-                      for w in omega])
+    exact = np.array(
+        [make_rom("pade", radius, diffusivity, 3).exact_transfer_function(1j * w) for w in omega]
+    )
     ax_mag.loglog(dimensionless, np.abs(exact), "k", lw=2.5, label="exact PDE")
 
-    for kind, order, style in [("poly", 2, "--"), ("spectral", 5, "-."), ("fv", 10, ":"),
-                               ("pade", 3, "-"), ("pade", 6, "-")]:
+    for kind, order, style in [
+        ("poly", 2, "--"),
+        ("spectral", 5, "-."),
+        ("fv", 10, ":"),
+        ("pade", 3, "-"),
+        ("pade", 6, "-"),
+    ]:
         rom = make_rom(kind, radius, diffusivity, order=order)
         response = np.array([rom.transfer_function(1j * w) for w in omega])
         label = f"{kind} ({rom.n_states} states)"
         ax_mag.loglog(dimensionless, np.abs(response), style, lw=1.4, label=label)
-        ax_err.loglog(dimensionless, np.abs(response - exact) / np.abs(exact), style,
-                      lw=1.4, label=label)
+        ax_err.loglog(
+            dimensionless, np.abs(response - exact) / np.abs(exact), style, lw=1.4, label=label
+        )
 
     ax_mag.set_ylabel(r"$|c_{surf}/N|$")
     ax_mag.set_title("Surface concentration response of a spherical particle")

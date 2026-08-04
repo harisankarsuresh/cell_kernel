@@ -145,8 +145,7 @@ class SPM(CellModel):
     @property
     def state_names(self) -> tuple[str, ...]:
         return tuple(
-            [f"neg_{i}" for i in range(self._n_neg)]
-            + [f"pos_{i}" for i in range(self._n_pos)]
+            [f"neg_{i}" for i in range(self._n_neg)] + [f"pos_{i}" for i in range(self._n_pos)]
         )
 
     def at_temperature(self, temperature: float) -> SPM:
@@ -166,9 +165,7 @@ class SPM(CellModel):
         """Uniformly loaded particles corresponding to a rested cell at ``soc``."""
         c_neg = float(self.parameters.negative.concentration(soc))
         c_pos = float(self.parameters.positive.concentration(soc))
-        return np.concatenate(
-            [self.ss_neg.initial_state(c_neg), self.ss_pos.initial_state(c_pos)]
-        )
+        return np.concatenate([self.ss_neg.initial_state(c_neg), self.ss_pos.initial_state(c_pos)])
 
     def _split(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         x = np.asarray(x, dtype=float).reshape(-1)
@@ -186,9 +183,7 @@ class SPM(CellModel):
 
     # ----------------------------------------------------------------- outputs
 
-    def _concentrations(
-        self, x: np.ndarray, current: float
-    ) -> tuple[float, float, float, float]:
+    def _concentrations(self, x: np.ndarray, current: float) -> tuple[float, float, float, float]:
         """Return ``(c_surf_neg, c_bar_neg, c_surf_pos, c_bar_pos)``."""
         xn, xp = self._split(x)
         cs_n, cb_n = self.ss_neg.outputs(xn, self._flux_neg * current)
@@ -256,9 +251,7 @@ class SPM(CellModel):
         jac[self._n_neg :, self._n_neg :] = self.ss_pos.A
         return jac
 
-    def _d_overpotential_d_concentration(
-        self, c_surf: float, j: float, electrode: str
-    ) -> float:
+    def _d_overpotential_d_concentration(self, c_surf: float, j: float, electrode: str) -> float:
         """Analytic ``d(eta)/d(c_surf)``.
 
         With :math:`u = j / 2 i_0` and

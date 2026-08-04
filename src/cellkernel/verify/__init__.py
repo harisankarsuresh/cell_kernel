@@ -107,10 +107,7 @@ class VerificationReport:
         """
         tol_v = 1e-9 if self.precision == "double" else 5e-4
         tol_soc = 1e-10 if self.precision == "double" else 1e-4
-        ok = (
-            self.max_voltage_error_vs_mirror < tol_v
-            and self.max_soc_error_vs_mirror < tol_soc
-        )
+        ok = self.max_voltage_error_vs_mirror < tol_v and self.max_soc_error_vs_mirror < tol_soc
         if self.mode == "openloop":
             ok = ok and self.max_voltage_error_mirror_vs_model < 1e-9
         return ok
@@ -122,10 +119,8 @@ class VerificationReport:
             f"{self.n_samples} samples, {self.mode}, {Path(self.compiler).name})",
             "",
             "  code generation fidelity",
-            f"    generated C vs NumPy mirror, voltage   "
-            f"{self.max_voltage_error_vs_mirror:.3e} V",
-            f"    generated C vs NumPy mirror, SoC       "
-            f"{self.max_soc_error_vs_mirror:.3e}",
+            f"    generated C vs NumPy mirror, voltage   {self.max_voltage_error_vs_mirror:.3e} V",
+            f"    generated C vs NumPy mirror, SoC       {self.max_soc_error_vs_mirror:.3e}",
         ]
         if self.mode == "openloop":
             lines += [
@@ -136,8 +131,7 @@ class VerificationReport:
                 f"    lookup table vs analytic fit, voltage  "
                 f"{self.max_voltage_error_table_vs_exact:.3e} V"
                 f"  ({self.max_voltage_error_table_vs_exact * 1e3:.3f} mV)",
-                f"    table interpolation error, worst       "
-                f"{self.table_error_volts * 1e3:.3f} mV",
+                f"    table interpolation error, worst       {self.table_error_volts * 1e3:.3f} mV",
                 "",
                 "  end to end",
                 f"    generated C vs full Python model        "
@@ -186,11 +180,7 @@ def compile_project(project: GeneratedProject, compiler: str | None = None) -> t
     done = subprocess.run(cmd, capture_output=True, text=True)
     if done.returncode != 0:
         raise RuntimeError(
-            "generated C failed to compile:\n"
-            + " ".join(cmd)
-            + "\n"
-            + done.stdout
-            + done.stderr
+            "generated C failed to compile:\n" + " ".join(cmd) + "\n" + done.stdout + done.stderr
         )
     return out, (done.stderr or "").strip()
 
@@ -223,9 +213,7 @@ def run_harness(
     rows = list(reader)
     if not rows:
         raise RuntimeError(f"harness produced no output; stderr: {done.stderr}")
-    return {
-        key: np.array([float(row[key]) for row in rows]) for key in rows[0]
-    }
+    return {key: np.array([float(row[key]) for row in rows]) for key in rows[0]}
 
 
 def _run_mirror(

@@ -52,9 +52,7 @@ def _fmt(value: float, precision: str) -> str:
 
 def _array_1d(name: str, values: np.ndarray, precision: str, per_line: int = 4) -> str:
     items = [_fmt(v, precision) for v in np.asarray(values).reshape(-1)]
-    lines = [
-        "    " + ", ".join(items[i : i + per_line]) for i in range(0, len(items), per_line)
-    ]
+    lines = ["    " + ", ".join(items[i : i + per_line]) for i in range(0, len(items), per_line)]
     body = ",\n".join(lines)
     return f"static const ck_real_t {name}[{len(items)}] = {{\n{body}\n}};"
 
@@ -66,10 +64,7 @@ def _array_2d(name: str, matrix: np.ndarray, precision: str) -> str:
         items = ", ".join(_fmt(v, precision) for v in row)
         rows.append(f"    {{ {items} }}")
     body = ",\n".join(rows)
-    return (
-        f"static const ck_real_t {name}[{matrix.shape[0]}][{matrix.shape[1]}] = "
-        f"{{\n{body}\n}};"
-    )
+    return f"static const ck_real_t {name}[{matrix.shape[0]}][{matrix.shape[1]}] = {{\n{body}\n}};"
 
 
 def emit_header(spec: EstimatorSpec, precision: str = "double") -> str:

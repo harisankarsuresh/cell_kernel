@@ -71,9 +71,7 @@ def test_filter_recovers_from_wrong_initial_soc(model, filter_class, kwargs, tol
     # Check the seeded error before filtering. The first reported value is already
     # corrected, and with a well-shaped prior most of the error is removed on the
     # very first sample, so it is not a measure of where the filter started.
-    assert abs(estimator.model.soc(estimator.x) - 0.75) == pytest.approx(
-        abs(soc_error), abs=1e-6
-    )
+    assert abs(estimator.model.soc(estimator.x) - 0.75) == pytest.approx(abs(soc_error), abs=1e-6)
     out = estimator.run(current, measured)
 
     final_error = abs(out["soc"][-1] - truth["soc"][-1])
@@ -118,9 +116,7 @@ def test_iterated_ekf_matches_or_beats_the_unscented_filter(model):
     ):
         estimator.initialise(0.90)
         out = estimator.run(current, measured)
-        results[name] = float(
-            np.sqrt(np.mean((out["soc"][-500:] - truth["soc"][-500:]) ** 2))
-        )
+        results[name] = float(np.sqrt(np.mean((out["soc"][-500:] - truth["soc"][-500:]) ** 2)))
     assert results["ekf"] <= results["ukf"] * 1.5
 
 
@@ -145,9 +141,7 @@ def test_filter_beats_open_loop_coulomb_counting(model, filter_class):
     estimator.initialise(0.85)
     out = estimator.run(current, measured)
 
-    open_loop = 0.85 - np.cumsum(current) * model.dt / (
-        3600.0 * model.parameters.nominal_capacity
-    )
+    open_loop = 0.85 - np.cumsum(current) * model.dt / (3600.0 * model.parameters.nominal_capacity)
     filtered_rmse = float(np.sqrt(np.mean((out["soc"][-500:] - truth["soc"][-500:]) ** 2)))
     open_loop_rmse = float(np.sqrt(np.mean((open_loop[-500:] - truth["soc"][-500:]) ** 2)))
     assert filtered_rmse < open_loop_rmse / 5.0
@@ -205,9 +199,7 @@ def test_filter_stays_within_its_own_uncertainty_through_a_long_rest(model):
     rest ends. A filter that claimed millivolt-level certainty about state of
     charge under those conditions would be lying.
     """
-    current = np.concatenate(
-        [np.full(600, 10.0), rest(3600.0, model.dt), np.full(600, 10.0)]
-    )
+    current = np.concatenate([np.full(600, 10.0), rest(3600.0, model.dt), np.full(600, 10.0)])
     measured, truth = truth_run(model, current, soc0=0.7)
     drift_allowance = 0.002
     estimator = EKF(
@@ -248,9 +240,7 @@ def test_reported_uncertainty_is_optimistic_during_a_long_rest(model):
     should be replaced by the three-sigma consistency check it currently stands in
     for.
     """
-    current = np.concatenate(
-        [constant_current(10.0, 600.0, model.dt), rest(3600.0, model.dt)]
-    )
+    current = np.concatenate([constant_current(10.0, 600.0, model.dt), rest(3600.0, model.dt)])
     measured, truth = truth_run(model, current, soc0=0.7)
     estimator = _tuned(EKF, model, soc_std=0.05, iterations=3)
     estimator.initialise(0.7)
@@ -270,8 +260,13 @@ def test_reported_uncertainty_is_optimistic_during_a_long_rest(model):
 def test_covariance_stays_symmetric_and_positive_semidefinite(model):
     current = synthetic_drive_cycle(5.0, duration=1800.0, dt=model.dt, peak_discharge_rate=4.0)
     measured, _ = truth_run(model, current, soc0=0.5, noise_std=5e-3)
-    estimator = EKF(model, EKF.suggest_process_noise(model, 0.05, 0.05), 2.5e-5,
-                    EKF.suggest_initial_covariance(model, 0.2), iterations=3)
+    estimator = EKF(
+        model,
+        EKF.suggest_process_noise(model, 0.05, 0.05),
+        2.5e-5,
+        EKF.suggest_initial_covariance(model, 0.2),
+        iterations=3,
+    )
     estimator.initialise(0.65)
     for i, v in zip(current, measured, strict=False):
         estimator.update(float(i), float(v))
@@ -368,9 +363,7 @@ def test_tight_sigma_points_lose_precision_relative_to_the_matrix_update(model):
         _, covariance = _sigma_predicted_covariance(estimator, model, current)
         A = model.state_jacobian(estimator.x, current)
         reference = A @ estimator.P @ A.T
-        errors.append(
-            np.max(np.abs(covariance - reference)) / max(np.abs(reference).max(), 1e-300)
-        )
+        errors.append(np.max(np.abs(covariance - reference)) / max(np.abs(reference).max(), 1e-300))
     assert errors[1] > errors[0] * 10.0
 
 
@@ -440,9 +433,7 @@ def test_capacity_estimate_stays_unbiased_on_a_short_pulse_train(model):
     capacity is acted on by the vehicle. The companion test below checks that a
     genuine excursion is far more informative than this.
     """
-    current = np.concatenate(
-        [constant_current(10.0, 5.0, model.dt), rest(30.0, model.dt)] * 4
-    )
+    current = np.concatenate([constant_current(10.0, 5.0, model.dt), rest(30.0, model.dt)] * 4)
     measured, truth = truth_run(model, current, soc0=0.6, noise_std=5e-4)
     assert abs(truth["soc"][0] - truth["soc"][-1]) < 0.02
 

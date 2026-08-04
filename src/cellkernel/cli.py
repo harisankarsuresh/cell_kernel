@@ -74,9 +74,7 @@ def _cmd_roms(args: argparse.Namespace) -> int:
     print("dimensionless frequency band (omega * R^2 / D):")
     print()
     bands = [(-2.0, 0.0), (-2.0, 1.0), (-2.0, 2.0)]
-    header = f"  {'model':<14}{'states':>7}" + "".join(
-        f"{f'<=1e{int(hi)}':>12}" for _, hi in bands
-    )
+    header = f"  {'model':<14}{'states':>7}" + "".join(f"{f'<=1e{int(hi)}':>12}" for _, hi in bands)
     print(header)
     print("  " + "-" * (len(header) - 2))
     for kind in _ROMS:
