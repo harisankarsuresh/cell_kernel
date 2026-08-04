@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cellkernel"
+version = "0.1.0"
+description = "Physics-based lithium-ion state estimators, from reduced-order electrochemistry to verified embedded C."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "Harisankar Suresh", email = "harisankarsuresh100@gmail.com" }]
+keywords = [
+    "lithium-ion",
+    "battery",
+    "state-of-charge",
+    "state-of-health",
+    "single-particle-model",
+    "reduced-order-model",
+    "kalman-filter",
+    "embedded",
+    "code-generation",
+    "battery-management-system",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Manufacturing",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Embedded Systems",
+]
+dependencies = ["numpy>=1.23", "scipy>=1.10"]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.6"]
+pybamm = ["pybamm>=24.1"]
+test = ["pytest>=7.0", "pytest-cov>=4.0"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.4", "matplotlib>=3.6"]
+
+[project.urls]
+Homepage = "https://github.com/harisankarsuresh/cell_kernel"
+Documentation = "https://github.com/harisankarsuresh/cell_kernel#readme"
+Source = "https://github.com/harisankarsuresh/cell_kernel"
+Issues = "https://github.com/harisankarsuresh/cell_kernel/issues"
+
+[project.scripts]
+cellkernel = "cellkernel.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cellkernel = ["codegen/runtime/*.c", "codegen/runtime/*.h"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: long-running tests",
+    "compiler: requires a working C compiler on PATH",
+    "pybamm: requires PyBaMM to be installed",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "NPY"]
+ignore = ["E741"]

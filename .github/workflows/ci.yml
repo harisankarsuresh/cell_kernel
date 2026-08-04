@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      # The generated C is verified against the Python reference on every
+      # platform. A C compiler is present by default on all three runners, so the
+      # compiler-marked tests run everywhere rather than being quietly skipped --
+      # which matters, because they are the ones that validate the code generator.
+      - name: Report toolchain
+        run: |
+          python -c "from cellkernel.verify import find_compiler; print('compiler:', find_compiler())"
+
+      - name: Test
+        run: python -m pytest -v --durations=15
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ruff
+      - run: ruff check src tests examples
+      - run: ruff format --check src tests examples
+
+  examples:
+    name: Examples run end to end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Run every example
+        run: |
+          set -e
+          for script in examples/*.py; do
+            echo "=== $script ==="
+            python "$script"
+          done
+
+  strict-c:
+    name: Generated C under extra scrutiny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Generate
+        run: python -m cellkernel.cli generate build/ci --precision float --order 4
+
+      # The generated Makefile already uses -Wall -Wextra -Wpedantic -Werror. This
+      # step adds the conversion and shadowing warnings on top, and builds with
+      # both gcc and clang, because each catches things the other does not.
+      - name: Compile with gcc, extra warnings
+        run: |
+          cd build/ci
+          gcc -std=c99 -O2 -Wall -Wextra -Wpedantic -Werror \
+              -Wconversion -Wshadow -Wstrict-prototypes -Wmissing-prototypes \
+              -Wcast-qual -Wundef -Wdouble-promotion \
+              -c cellkernel_estimator.c -o /dev/null
+      - name: Compile with clang, extra warnings
+        run: |
+          cd build/ci
+          clang -std=c99 -O2 -Wall -Wextra -Wpedantic -Werror \
+                -Wconversion -Wshadow -Wstrict-prototypes -Wmissing-prototypes \
+                -c cellkernel_estimator.c -o /dev/null
+      - name: Undefined-behaviour sanitiser on the harness
+        run: |
+          cd build/ci
+          clang -std=c99 -O1 -g -fsanitize=undefined,address \
+                -fno-omit-frame-pointer \
+                -o ck_harness_san ck_harness.c cellkernel_estimator.c -lm
+          python - <<'PY'
+          import subprocess
+          rows = "\n".join(f"{2.5},{3.9}" for _ in range(400))
+          done = subprocess.run(["./ck_harness_san", "filter", "0.8"],
+                                input=rows, capture_output=True, text=True)
+          print(done.stderr[-4000:])
+          assert done.returncode == 0, done.stderr
+          PY
