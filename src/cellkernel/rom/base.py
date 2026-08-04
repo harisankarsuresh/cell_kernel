@@ -300,6 +300,7 @@ class DiffusionROM(abc.ABC):
             C = C * t[None, :]
             x0 = inverse[:, None] * x0
         Ad, Bd, Cd, Dd, _ = cont2discrete((A, B, C, D), dt, method="zoh")
+        Ad, Bd = self._project_conservation(Ad, Bd, Cd, x0.reshape(-1), dt)
         return DiscreteStateSpace(
             A=np.ascontiguousarray(Ad, dtype=float),
             B=np.ascontiguousarray(Bd, dtype=float).reshape(-1, 1),
@@ -308,6 +309,74 @@ class DiffusionROM(abc.ABC):
             dt=float(dt),
             x0_from_uniform=np.ascontiguousarray(x0, dtype=float).reshape(-1, 1),
         )
+
+    def _project_conservation(
+        self,
+        Ad: np.ndarray,
+        Bd: np.ndarray,
+        Cd: np.ndarray,
+        u: np.ndarray,
+        dt: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Restore the two conservation invariants exactly after discretisation.
+
+        Two properties hold for the continuous system by construction, and the
+        whole package leans on them:
+
+        ``A u = 0``
+            A uniformly loaded particle carrying no flux is a fixed point -- a
+            rested cell does not drift.
+        ``w A = 0`` and ``w B = 3/R``
+            where ``w`` is the row of ``C`` extracting the volume average. This is
+            the mass balance, and it is why state of charge is exact coulomb
+            counting rather than something that accumulates discretisation error.
+
+        After zero-order-hold sampling they become ``A_d u = u``, ``w A_d = w`` and
+        ``w B_d = 3 dt / R``. They should survive the matrix exponential, and at
+        any sane step they do, to a few machine epsilons.
+
+        They do not always survive an *insane* step. At ``dt = 100 R^2/D`` the
+        generator spans fifteen orders of magnitude between the conserved mode and
+        the fastest decayed one, and scaling-and-squaring loses accuracy on a
+        matrix that stiff. Measured against SciPy 1.15, ``A_d[0, 0]`` for a Pade
+        model came out as 0.99988 on one platform and 1.000065 on another instead
+        of exactly 1, and a rested particle grew by 3% over 500 steps. SciPy 1.18
+        gets the same case right. Depending on the linear-algebra backend to
+        preserve a property this fundamental is not a reasonable position for the
+        library to take.
+
+        So the invariants are imposed rather than hoped for. Both are enforced by
+        rank-one corrections, applied right-eigenvector first and then
+        left-eigenvector; because ``w u = 1``, the second correction leaves the
+        first intact:
+
+        .. math::
+
+            A_d \\leftarrow A_d - (A_d u - u) w,
+            \\qquad
+            A_d \\leftarrow A_d - u (w A_d - w).
+
+        At a realistic step this is a no-op to within rounding -- the corrections
+        are of order 1e-16 -- so nothing is being papered over. At an extreme step
+        it guarantees that the conserved quantity stays conserved even where the
+        rest of the matrix has lost accuracy, which is the honest failure mode:
+        degrade the shape dynamics, never the lithium count.
+        """
+        w = np.asarray(Cd, dtype=float)[1].copy()
+        u = np.asarray(u, dtype=float).reshape(-1)
+        overlap = float(w @ u)
+        if not np.isfinite(overlap) or abs(overlap) < 1e-12:
+            # No usable conserved direction; leave the discretisation untouched.
+            return Ad, Bd
+        u = u / overlap
+
+        Ad = np.array(Ad, dtype=float, copy=True)
+        Bd = np.array(Bd, dtype=float, copy=True).reshape(-1)
+
+        Ad -= np.outer(Ad @ u - u, w)
+        Ad -= np.outer(u, w @ Ad - w)
+        Bd -= u * (float(w @ Bd) - 3.0 * dt / self.radius)
+        return Ad, Bd.reshape(-1, 1)
 
     def transfer_function(self, s: complex) -> complex:
         """Reduced-model transfer function from molar influx to ``c_surf``."""

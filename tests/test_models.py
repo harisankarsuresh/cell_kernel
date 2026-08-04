@@ -66,20 +66,16 @@ def test_rested_state_is_stationary(cell, kind):
     """A rested cell at open circuit must not drift.
 
     Five thousand seconds of open circuit, so any per-step round-off in the
-    discrete update accumulates 500 times over. The finite-volume model gets a
-    looser voltage bound for the reason given in
-    ``test_uniform_state_is_an_equilibrium``: its uniform state is preserved only
-    to the accuracy of the exponential of a stiff generator, which depends on the
-    linear-algebra backend. Even so, 1 microvolt over eighty minutes is four
-    orders of magnitude below the noise floor of any measurement front end.
+    discrete update gets 500 chances to accumulate. It does not, because the
+    uniform state is an exactly enforced fixed point of the discretisation -- see
+    ``DiffusionROM._project_conservation``.
     """
     model = SPM(cell, dt=10.0, rom=kind, order=4)
     x = model.initial_state(0.5)
     v0 = model.voltage(x, 0.0)
     for _ in range(500):
         x = model.step(x, 0.0)
-    tol = 1e-6 if kind == "fv" else 1e-9
-    assert model.voltage(x, 0.0) == pytest.approx(v0, abs=tol)
+    assert model.voltage(x, 0.0) == pytest.approx(v0, abs=1e-9)
     assert model.soc(x) == pytest.approx(0.5, abs=1e-9)
 
 

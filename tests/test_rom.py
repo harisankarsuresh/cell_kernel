@@ -111,32 +111,20 @@ def test_mass_balance_is_structurally_exact(rom):
 def test_uniform_state_is_an_equilibrium(rom):
     """A uniformly loaded particle at zero flux must report c_surf = c_bar = c.
 
-    The finite-volume model is held to a looser bound than the compact ones. That
-    is structural, not a concession. In the compact models a uniform particle is
-    represented exactly -- the conserved coordinate carries the concentration and
-    the shape coordinates are zero -- so the discrete update reproduces it to a
-    couple of machine epsilons. The finite-volume state is instead the vector of
-    ones, which lies in the null space of the generator only in exact arithmetic.
-    That generator is stiff: shell volumes scale as ``dr**3`` while face areas
-    scale as ``dr**2``, so its diagonal spans orders of magnitude, and the matrix
-    exponential of a stiff generator loses a corresponding number of digits.
-
-    The residual sits near 1e-12 relative and shifts with the SciPy and BLAS
-    build -- it was measured at 1.004e-12 against SciPy 1.15 and below 1e-13
-    against 1.18. A 1e-12 bound therefore encodes the linear-algebra backend
-    rather than a property of the model, and fails on whichever Python version
-    happens to resolve the older wheel.
+    Holds to machine precision for every model, finite volume included, because
+    :meth:`~cellkernel.rom.base.DiffusionROM.discretise` imposes ``A u = u``
+    explicitly instead of trusting the matrix exponential to preserve it. Without
+    that projection this bound is a property of the linear-algebra backend rather
+    than of the model: SciPy 1.15 leaves a residual of 1.004e-12 here where 1.18
+    leaves under 1e-13.
     """
     c0 = 24000.0
-    stiff = rom.name == "fv"
-    tol_surf = 1e-9 if stiff else 1e-10
-    tol_bar = 1e-9 if stiff else 1e-12
     ss = rom.discretise(1.0)
     x = ss.initial_state(c0)
     for _ in range(50):
         c_surf, c_bar = ss.outputs(x, 0.0)
-        assert c_surf == pytest.approx(c0, rel=tol_surf)
-        assert c_bar == pytest.approx(c0, rel=tol_bar)
+        assert c_surf == pytest.approx(c0, rel=1e-10)
+        assert c_bar == pytest.approx(c0, rel=1e-12)
         x = ss.step(x, 0.0)
 
 
@@ -187,6 +175,37 @@ def test_zoh_discretisation_is_stable_at_huge_timestep(rom):
     if A.shape[0] > 1:
         assert np.allclose(A[0, 1:], 0.0, atol=1e-12)
         assert np.max(np.abs(np.linalg.eigvals(A[1:, 1:]))) < 1.0
+
+
+@pytest.mark.parametrize("rom", _all_roms(), ids=ALL_KINDS)
+@pytest.mark.parametrize("ratio", [1e-4, 1e-2, 1.0, 100.0, 1000.0])
+def test_conservation_invariants_survive_any_timestep(rom, ratio):
+    """The three conservation identities must hold exactly at every step size.
+
+    ``A u = u``
+        a uniformly loaded, unloaded particle is a fixed point;
+    ``w A = w``
+        the volume average is unchanged by the update;
+    ``w B = 3 dt / R``
+        and it advances by exactly the coulomb count.
+
+    These are guaranteed by construction in continuous time, and
+    :meth:`~cellkernel.rom.base.DiffusionROM.discretise` projects them back after
+    sampling rather than assuming the matrix exponential preserved them. It does
+    not always: at ``dt = 100 R^2/D`` the generator spans fifteen orders of
+    magnitude, and SciPy 1.15 returned ``A[0, 0]`` as 0.99988 on one platform and
+    1.000065 on another. The tolerance here is deliberately near machine epsilon,
+    because these identities are exact statements and not approximations.
+    """
+    dt = ratio * rom.time_constant
+    ss = rom.discretise(dt)
+    u = ss.x0_from_uniform.reshape(-1)
+    w = ss.C[1]
+
+    assert np.max(np.abs(ss.A @ u - u)) <= 1e-12 * max(np.max(np.abs(u)), 1.0)
+    assert np.max(np.abs(w @ ss.A - w)) <= 1e-12 * np.max(np.abs(w))
+    target = 3.0 * dt / rom.radius
+    assert float(w @ ss.B.reshape(-1)) == pytest.approx(target, rel=1e-12)
 
 
 @pytest.mark.parametrize("rom", _all_roms(), ids=ALL_KINDS)
