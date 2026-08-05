@@ -248,7 +248,35 @@ Parameters are representative, not fitted, and the module says so: reported inte
 
 Reproduce with `python examples/07_degradation.py`.
 
-### 7. Estimators
+### 7. Charging as fast as the physics allows
+
+`cellkernel.protocols` inverts the plating criterion: given a state and a temperature, `plating_limited_current` returns the largest charging current that keeps the electrode a stated margin above the onset. Feeding that back as the setpoint gives a charge that is aggressive where it can be and cautious where it must be.
+
+The safe rate, in C:
+
+| soc | −10 °C | 0 °C | 10 °C | 25 °C | 40 °C |
+|---|---|---|---|---|---|
+| 0.10 | 3.00 | 3.00 | 3.00 | 3.00 | 3.00 |
+| 0.50 | 0.53 | 0.85 | 1.34 | 2.49 | 3.00 |
+| 0.90 | 0.17 | 0.28 | 0.45 | 0.87 | 1.57 |
+
+A fixed-rate charger has to sit under the worst cell in that grid. Charging from 10% with two hours available:
+
+| | to 80% | min electrode potential | time spent plating |
+|---|---|---|---|
+| **−5 °C** CCCV 1C | 78 min | −8.1 mV | 8.9 min |
+| **−5 °C** CCCV 3C | 72 min | −46.7 mV | 12.3 min |
+| **−5 °C** plating-limited | 82 min | **+2.2 mV** | **0** |
+| **25 °C** CCCV 3C | 26 min | +2.8 mV | 0 |
+| **25 °C** plating-limited | 39 min | +8.4 mV | 0 |
+
+At −5 °C the conventional charge deposits metal at *every* rate offered, including 1C, for about ten minutes of each charge — and nothing in its terminal measurements tells it so. The guarded protocol gets to a comparable state of charge in a comparable time and never crosses the onset.
+
+At 25 °C the trade reverses: nothing plates and the guarded protocol is slower than simply charging at 3C. That is the honest cost of a guarantee — it is paid exactly when it was not needed. Whether it is worth paying depends on how much of the year the pack spends cold.
+
+Reproduce with `python examples/08_fast_charge.py`.
+
+### 8. Estimators
 
 `EKF` (Joseph-form covariance, optional Gauss-Newton iteration), `UKF` (sigma points on the measurement only — for an affine map the unscented transform is exact, so propagating them through the linear process would compute the same numbers more slowly and *less* accurately), and `DualEKF` (adds capacity retention and resistance growth).
 
@@ -271,7 +299,7 @@ The iterated EKF beats the unscented filter here, for a fraction of the cost.
 
 The middle panel shows what a single linearised correction actually does when seeded 15% wrong: it drives the estimate *above 100%* state of charge and then takes the whole cycle to crawl back, ending worse than open-loop coulomb counting. That is the failure mode the table above quantifies, and it is the reason `iterations` defaults to more than one. Reproduce with `python examples/02_estimate_state_of_charge.py`.
 
-### 8. Code generation, and evidence
+### 9. Code generation, and evidence
 
 `generate()` emits `cellkernel_estimator.{h,c}` — no dynamic allocation, no global mutable state, fixed-size arrays, bounded execution time, no iteration, worst case equal to typical case. It compiles under `-std=c99 -Wall -Wextra -Wpedantic -Werror` with no warnings. Alongside it come a host harness, a `Makefile`, a `CMakeLists.txt`, and a `BUDGET.txt`:
 
@@ -311,7 +339,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 409 tests
+pytest                      # 428 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 

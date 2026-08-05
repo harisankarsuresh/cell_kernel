@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 to follow [semantic versioning](https://semver.org/spec/v2.0.0.html) from 1.0
 onwards. Before then, minor versions may break the API.
 
-## Unreleased
+## 0.2.0
 
 ### Added
 
