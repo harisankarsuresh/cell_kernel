@@ -289,6 +289,17 @@ At −5 °C the conventional charge deposits metal at *every* rate offered, incl
 
 At 25 °C the trade reverses: nothing plates and the guarded protocol is slower than simply charging at 3C. That is the honest cost of a guarantee — it is paid exactly when it was not needed. Whether it is worth paying depends on how much of the year the pack spends cold.
 
+**And it runs in the firmware.** The generated C exposes both:
+
+```c
+ck_real_t phi   = ck_plating_potential(&est, current);
+ck_real_t setpt = ck_max_charge_current(&est, 0.01f, CK_LIMIT_CEILING);
+```
+
+The potential costs nothing extra — `ck_voltage` already forms it as a sub-expression and discards it. The limiter is bisection over a fixed 24 steps, so execution time is constant and known: no convergence test, no loop that might not terminate. The generated bisection is **bit-identical** to its Python mirror, which is what a fixed iteration count with no tolerance test should give, and the plating potential agrees to 1e-12 V in double precision.
+
+That closes the loop the package exists to close. The quantity that limits charging is not measurable at the terminals, so a controller either models it or guesses — and this is that model, compiled, on the microcontroller that sets the current.
+
 Reproduce with `python examples/08_fast_charge.py`.
 
 ### 8. Estimators
@@ -354,7 +365,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 557 tests
+pytest                      # 568 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 

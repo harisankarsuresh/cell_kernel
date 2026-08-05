@@ -42,6 +42,13 @@ onwards. Before then, minor versions may break the API.
 
 - **`cellkernel.protocols`** — charging protocols that invert the plating
   criterion rather than guessing a safe rate.
+- **The plating limiter in the generated C.** `ck_plating_potential` and
+  `ck_max_charge_current` put the charge-rate decision on the microcontroller
+  that sets the current. The potential is free — `ck_voltage` already formed it
+  and threw it away — and the limiter is bisection over a fixed 24 steps, so
+  execution time is constant. The generated bisection is bit-identical to its
+  Python mirror.
+- `cellkernel charge` and `cellkernel age` subcommands.
 - Cross-model integration tests: every estimator against every model, plus the
   interface contract each model must satisfy.
 - Test coverage for the CLI (was 0%) and cycler-file loading (was 18%).

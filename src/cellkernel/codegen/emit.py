@@ -106,6 +106,21 @@ typedef {precision} ck_real_t;
 #define CK_V_MAX      ({_fmt(hi, precision)})
 
 /*
+ * Bisection steps in ck_max_charge_current. Twenty-four halvings resolve the
+ * ceiling to about one part in sixteen million, far past anything a current
+ * sensor can act on, and the count is fixed so the routine takes the same time
+ * every call.
+ */
+#define CK_LIMIT_ITERATIONS 24
+
+/*
+ * Largest current the potential tables were sized to cover, in amperes.
+ * ck_max_charge_current will not search above it: past that point the tables
+ * saturate and the answer would describe the table rather than the cell.
+ */
+#define CK_LIMIT_CEILING  ({_fmt(spec.current_ceiling, precision)})
+
+/*
  * All mutable state. Allocate one per cell; the code touches no globals, so
  * instances are independent and every entry point is reentrant.
  */
@@ -155,6 +170,34 @@ ck_real_t ck_surface_stoichiometry_negative(const ck_estimator_t *est, ck_real_t
 ck_real_t ck_surface_stoichiometry_positive(const ck_estimator_t *est, ck_real_t current);
 ck_real_t ck_bulk_stoichiometry_negative(const ck_estimator_t *est);
 ck_real_t ck_bulk_stoichiometry_positive(const ck_estimator_t *est);
+
+/*
+ * Negative electrode potential against lithium metal, in volts. Below zero the
+ * cell is depositing metal rather than intercalating it.
+ *
+ * This is the quantity that actually limits charging, and it is not observable
+ * from the terminals -- which is the reason for carrying a physics-based model
+ * into the firmware at all. It costs nothing extra: ck_voltage already forms it
+ * as a sub-expression and then throws it away.
+ */
+ck_real_t ck_plating_potential(const ck_estimator_t *est, ck_real_t current);
+
+/*
+ * Largest charging current, in amperes as a positive magnitude, that keeps the
+ * negative electrode at least `margin` volts above the plating onset. Returns
+ * zero when no charging current is safe, which happens at high state of charge
+ * in the cold.
+ *
+ * Bisection over a fixed CK_LIMIT_ITERATIONS steps, so the execution time is
+ * constant and known -- no convergence test, no loop that might not terminate.
+ * The potential is monotone decreasing in charging current, which is what makes
+ * bisection valid here.
+ *
+ * Feed the result back as the charge setpoint and the cell charges as fast as
+ * its own electrochemistry permits, instead of as fast as a table guessed.
+ */
+ck_real_t ck_max_charge_current(const ck_estimator_t *est, ck_real_t margin,
+                                ck_real_t ceiling);
 
 #ifdef __cplusplus
 }}
@@ -425,6 +468,44 @@ ck_real_t ck_soc(const ck_estimator_t *est)
     return CK_SOC_SCALE * acc + CK_SOC_OFFSET;
 }}
 
+ck_real_t ck_plating_potential(const ck_estimator_t *est, ck_real_t current)
+{{
+    const ck_real_t cs_n = ck_surface_neg(est, current);
+    const ck_real_t u_n = ck_lookup(ck_ocp_neg, CK_OCP_N_NEG, cs_n / CK_CMAX_NEG,
+                                    CK_OCP_MIN_NEG, CK_OCP_INVSTEP_NEG);
+    const ck_real_t eta_n = ck_overpotential(cs_n, CK_CMAX_NEG, CK_I0_PREFACTOR_NEG,
+                                             CK_J_NEG * current);
+    return u_n + eta_n;
+}}
+
+ck_real_t ck_max_charge_current(const ck_estimator_t *est, ck_real_t margin,
+                                ck_real_t ceiling)
+{{
+    ck_real_t low = (ck_real_t) 0;
+    ck_real_t high = ceiling;
+    int i;
+
+    if (ceiling <= (ck_real_t) 0) {{
+        return (ck_real_t) 0;
+    }}
+    /* Charging is negative current in this convention. */
+    if (ck_plating_potential(est, -ceiling) >= margin) {{
+        return ceiling;
+    }}
+    if (ck_plating_potential(est, (ck_real_t) 0) < margin) {{
+        return (ck_real_t) 0;
+    }}
+    for (i = 0; i < CK_LIMIT_ITERATIONS; ++i) {{
+        const ck_real_t middle = (ck_real_t) 0.5 * (low + high);
+        if (ck_plating_potential(est, -middle) >= margin) {{
+            low = middle;
+        }} else {{
+            high = middle;
+        }}
+    }}
+    return low;
+}}
+
 ck_real_t ck_surface_stoichiometry_negative(const ck_estimator_t *est, ck_real_t current)
 {{
     return ck_surface_neg(est, current) / CK_CMAX_NEG;
@@ -646,16 +727,19 @@ int main(int argc, char **argv)
     soc0 = atof(argv[2]);
 
     ck_init(&est, (ck_real_t) soc0);
-    printf("soc,voltage,sto_neg,sto_pos\\n");
+    printf("soc,voltage,sto_neg,sto_pos,plating,charge_limit\\n");
 
     while (scanf("%lf,%lf", &current, &voltage) == 2) {
         const ck_real_t i_k = (ck_real_t) current;
 
-        printf("%.17g,%.17g,%.17g,%.17g\\n",
+        printf("%.17g,%.17g,%.17g,%.17g,%.17g,%.17g\\n",
                (double) ck_soc(&est),
                (double) ck_voltage(&est, i_k),
                (double) ck_surface_stoichiometry_negative(&est, i_k),
-               (double) ck_surface_stoichiometry_positive(&est, i_k));
+               (double) ck_surface_stoichiometry_positive(&est, i_k),
+               (double) ck_plating_potential(&est, i_k),
+               (double) ck_max_charge_current(&est, (ck_real_t) 0.01,
+                                              (ck_real_t) CK_LIMIT_CEILING));
 
         ck_predict(&est, i_k);
         if (filtering) {

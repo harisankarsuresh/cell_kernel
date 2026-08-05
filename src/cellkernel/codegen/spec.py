@@ -87,6 +87,11 @@ class EstimatorSpec:
     #: ``(stoichiometry at 0% SoC, stoichiometry at 100% SoC)`` per electrode.
     sto_negative: tuple[float, float]
     sto_positive: tuple[float, float]
+    #: Largest current the potential tables were sized to cover, in amperes.
+    #: ``ck_max_charge_current`` will not search above it, because past that
+    #: point the tables saturate and the answer would be a table artefact rather
+    #: than a statement about the cell.
+    current_ceiling: float = 15.0
     #: Provenance, emitted into the generated header.
     provenance: str = ""
 
@@ -192,6 +197,39 @@ class ReferenceEstimator:
         return float(
             self.spec.soc_scale * self._bulk_concentration("negative") + self.spec.soc_offset
         )
+
+    def plating_potential(self, current: float) -> float:
+        """Negative electrode potential against lithium metal, in volts."""
+        el = self.spec.negative
+        c_surf = self._surface_concentration("negative", current)
+        return float(
+            el.ocp_table.interpolate(c_surf / el.max_concentration)
+            + self._overpotential(el, c_surf, current)
+        )
+
+    def max_charge_current(self, margin: float, ceiling: float, iterations: int = 24) -> float:
+        """Mirror of ``ck_max_charge_current``, bisection included.
+
+        The iteration count matches the generated code rather than converging to
+        a tolerance, because the point of the mirror is to reproduce what the
+        firmware does step for step. A tighter Python answer would be a *better*
+        number and a worse mirror, and would show up in verification as a
+        code-generation error that is not one.
+        """
+        if ceiling <= 0.0:
+            return 0.0
+        if self.plating_potential(-ceiling) >= margin:
+            return ceiling
+        if self.plating_potential(0.0) < margin:
+            return 0.0
+        low, high = 0.0, ceiling
+        for _ in range(iterations):
+            middle = 0.5 * (low + high)
+            if self.plating_potential(-middle) >= margin:
+                low = middle
+            else:
+                high = middle
+        return low
 
     def voltage_jacobian(self, current: float) -> np.ndarray:
         spec = self.spec
@@ -594,6 +632,7 @@ def spec_from_spm(
         map_positive=ss_pos.x0_from_uniform.reshape(-1).copy(),
         sto_negative=(float(neg.stoich_at_0_soc), float(neg.stoich_at_100_soc)),
         sto_positive=(float(pos.stoich_at_0_soc), float(pos.stoich_at_100_soc)),
+        current_ceiling=float(max_c_rate * model.parameters.nominal_capacity),
         provenance=(
             f"cell={model.parameters.name!r} "
             f"rom={type(model.rom_neg).__name__}/{type(model.rom_pos).__name__} "
