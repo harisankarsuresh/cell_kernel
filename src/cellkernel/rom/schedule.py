@@ -73,6 +73,8 @@ class ScheduledStateSpace:
     systems: tuple[DiscreteStateSpace, ...]
     activation_energy: float = 0.0
     reference_temperature: float = 298.15
+    #: Arrhenius factor at each grid point, precomputed in ``__post_init__``.
+    _grid_factors: np.ndarray = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         temps = np.asarray(self.temperatures, dtype=float).reshape(-1)
@@ -83,6 +85,17 @@ class ScheduledStateSpace:
         if np.any(np.diff(temps) <= 0.0):
             raise ValueError("temperatures must be strictly increasing")
         object.__setattr__(self, "temperatures", temps)
+        # Grid factors never change, and recomputing two exponentials per blend
+        # was a measurable share of the runtime before they were cached here.
+        if self.activation_energy == 0.0:
+            grid_factors = np.ones_like(temps)
+        else:
+            grid_factors = np.exp(
+                self.activation_energy
+                / GAS_CONSTANT
+                * (1.0 / self.reference_temperature - 1.0 / temps)
+            )
+        object.__setattr__(self, "_grid_factors", grid_factors)
 
     def factor(self, temperature: float) -> float:
         """Arrhenius scaling of diffusivity relative to the reference temperature."""
@@ -131,9 +144,9 @@ class ScheduledStateSpace:
             span = temps[upper] - temps[lower]
             blend = (float(temperature) - temps[lower]) / span
         else:
-            low = self.factor(float(temps[lower]))
-            high = self.factor(float(temps[upper]))
-            span = high - low
+            factors = self._grid_factors
+            low = factors[lower]
+            span = factors[upper] - low
             if abs(span) < 1e-300:  # pragma: no cover - degenerate grid
                 blend = 0.0
             else:
@@ -172,9 +185,9 @@ class ScheduledStateSpace:
         lower, upper, _ = self.weights(temperature)
         if self.activation_energy == 0.0:
             return 1.0 / (temps[upper] - temps[lower])
-        low = self.factor(float(temps[lower]))
-        high = self.factor(float(temps[upper]))
-        span = high - low
+        factors = self._grid_factors
+        low = factors[lower]
+        span = factors[upper] - low
         if abs(span) < 1e-300:  # pragma: no cover - degenerate grid
             return 0.0
         derivative = (

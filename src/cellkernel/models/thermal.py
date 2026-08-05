@@ -7,6 +7,7 @@ import numpy as np
 from ..ocp import derivative_of
 from ..params import FARADAY, GAS_CONSTANT, CellParameters
 from ..rom import make_rom
+from ..rom.base import DiscreteStateSpace
 from ..rom.schedule import ScheduledStateSpace, schedule_over_temperature
 from .base import CellModel, ModelOutputs
 
@@ -167,6 +168,23 @@ class ThermalSPM(CellModel):
         )
         self._conductance = self.thermal.heat_transfer_coefficient * self.thermal.surface_area
         self._decay = float(np.exp(-self.dt / self.thermal.time_constant))
+        # Single-entry cache for the blended systems. Evaluating one sample asks
+        # for them six times -- concentrations, voltage, heat generation, the
+        # step itself -- always at the same temperature, so caching one deep
+        # turns six blends per step into one and takes roughly half the runtime
+        # out of the model.
+        self._cache_temperature: float | None = None
+        self._cache_systems: tuple[DiscreteStateSpace, DiscreteStateSpace] | None = None
+
+    def _systems(self, temperature: float) -> tuple[DiscreteStateSpace, DiscreteStateSpace]:
+        """Blended ``(negative, positive)`` systems at ``temperature``."""
+        if self._cache_temperature != temperature or self._cache_systems is None:
+            self._cache_systems = (
+                self.schedule_negative.at(temperature),
+                self.schedule_positive.at(temperature),
+            )
+            self._cache_temperature = temperature
+        return self._cache_systems
 
     # ------------------------------------------------------------------- shape
 
@@ -202,8 +220,7 @@ class ThermalSPM(CellModel):
 
     def initial_state(self, soc: float, temperature: float | None = None) -> np.ndarray:
         temp = float(temperature if temperature is not None else self.ambient)
-        neg = self.schedule_negative.at(temp)
-        pos = self.schedule_positive.at(temp)
+        neg, pos = self._systems(temp)
         return np.concatenate(
             [
                 neg.initial_state(float(self.parameters.negative.concentration(soc))),
@@ -224,8 +241,9 @@ class ThermalSPM(CellModel):
 
     def _concentrations(self, z: np.ndarray, current: float) -> tuple[float, float, float, float]:
         xn, xp, temp = self._split(z)
-        cs_n, cb_n = self.schedule_negative.at(temp).outputs(xn, self._flux_neg * current)
-        cs_p, cb_p = self.schedule_positive.at(temp).outputs(xp, self._flux_pos * current)
+        neg_ss, pos_ss = self._systems(temp)
+        cs_n, cb_n = neg_ss.outputs(xn, self._flux_neg * current)
+        cs_p, cb_p = pos_ss.outputs(xp, self._flux_pos * current)
         return cs_n, cb_n, cs_p, cb_p
 
     def _exchange_current(self, c_surf: float, side: str, temp: float) -> float:
@@ -293,8 +311,7 @@ class ThermalSPM(CellModel):
     def step(self, z: np.ndarray, current: float) -> np.ndarray:
         xn, xp, temp = self._split(z)
         current = float(current)
-        neg = self.schedule_negative.at(temp)
-        pos = self.schedule_positive.at(temp)
+        neg, pos = self._systems(temp)
         heat = self.heat_generation(z, current)["total"]
         rise = heat / self._conductance
         temp_next = self.ambient + rise + (temp - self.ambient - rise) * self._decay
@@ -370,8 +387,7 @@ class ThermalSPM(CellModel):
         dv_dcp = float(derivative_of(pos.ocp)(cs_p / pos.max_concentration)) / pos.max_concentration
         dv_dcp += self._d_overpotential_d_concentration(cs_p, j_p, "positive", temp)
 
-        neg_ss = self.schedule_negative.at(temp)
-        pos_ss = self.schedule_positive.at(temp)
+        neg_ss, pos_ss = self._systems(temp)
         grad = np.zeros(self.n_states)
         grad[: self._n_neg] = dv_dcn * neg_ss.C[0]
         grad[self._n_neg : self._i_temp] = dv_dcp * pos_ss.C[0]
@@ -407,8 +423,7 @@ class ThermalSPM(CellModel):
         n = self.n_states
         jac = np.zeros((n, n))
 
-        neg_ss = self.schedule_negative.at(temp)
-        pos_ss = self.schedule_positive.at(temp)
+        neg_ss, pos_ss = self._systems(temp)
         jac[: self._n_neg, : self._n_neg] = neg_ss.A
         jac[self._n_neg : self._i_temp, self._n_neg : self._i_temp] = pos_ss.A
 
@@ -448,8 +463,7 @@ class ThermalSPM(CellModel):
 
         deta_n_dc = self._d_overpotential_d_concentration(cs_n, j_n, "negative", temp)
         deta_p_dc = self._d_overpotential_d_concentration(cs_p, j_p, "positive", temp)
-        neg_ss = self.schedule_negative.at(temp)
-        pos_ss = self.schedule_positive.at(temp)
+        neg_ss, pos_ss = self._systems(temp)
 
         grad = np.zeros(self.n_states)
         grad[: self._n_neg] = current * deta_n_dc * neg_ss.C[0]

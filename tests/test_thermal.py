@@ -186,6 +186,39 @@ def test_self_heating_raises_temperature_under_load(model, cell):
 # ------------------------------------------------------------------- schedule
 
 
+def test_blended_systems_are_cached_within_a_sample(cell):
+    """Evaluating one sample must not re-blend the schedule six times.
+
+    Concentrations, voltage, heat generation and the step itself all need the
+    same matrices at the same temperature. Caching one deep is worth about half
+    the model's runtime, and this pins it so a later refactor cannot quietly
+    undo it.
+    """
+    model = ThermalSPM(cell, dt=1.0, rom="pade", order=3)
+    z = model.initial_state(0.6, 295.0)
+    model.outputs(z, 5.0)
+    first = model._systems(295.0)
+    model.heat_generation(z, 5.0)
+    model.step(z, 5.0)
+    second = model._systems(295.0)
+    # Identity, not equality: a fresh blend would allocate new objects.
+    assert first[0] is second[0]
+    assert first[1] is second[1]
+    assert model._cache_temperature == 295.0
+
+
+def test_cache_refreshes_when_temperature_moves(cell):
+    """And it must not go stale, which is the failure mode a cache introduces."""
+    model = ThermalSPM(cell, dt=1.0, rom="pade", order=3)
+    cold = model.initial_state(0.6, 265.0)
+    warm = model.initial_state(0.6, 320.0)
+    first = model.voltage(cold, 8.0)
+    second = model.voltage(warm, 8.0)
+    again = model.voltage(cold, 8.0)
+    assert first != second
+    assert again == pytest.approx(first, rel=1e-15)
+
+
 def test_schedule_reproduces_grid_points_exactly(cell):
     """On a grid point the interpolant must return that system unchanged."""
     grid = np.linspace(263.15, 323.15, 7)

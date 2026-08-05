@@ -35,6 +35,12 @@ reference to machine precision in double precision and to about 7 microvolts in
 single precision — three orders of magnitude below the noise floor of a
 production measurement front end.
 
+Optional layers resolve salt transport across the electrode sandwich, couple a
+lumped thermal node with the reduced-order matrices gain-scheduled over
+temperature, and predict capacity fade from interphase growth and lithium
+plating. Generated estimators can be scheduled across a temperature range, taking
+a measured cell temperature as an input rather than estimating it.
+
 # Statement of need
 
 The open-source battery modelling ecosystem is mature at the simulation and
@@ -101,6 +107,17 @@ lookup table. Aggregating them would obscure which is which: a three-millivolt
 discrepancy is unremarkable if it is table resolution and serious if it is
 arithmetic.
 
+**Scheduling on the physical variable.** Solid diffusivity is Arrhenius in
+temperature and enters the model through a matrix exponential, so
+temperature-dependent estimators precompute matrices across a grid and blend them
+online. The blend is taken on the Arrhenius factor rather than on temperature.
+At a sample period short against the diffusion time constant the discrete matrix
+approaches $I + A_c(D)\Delta t$ with $A_c \propto D$, so the matrices are nearly
+affine in diffusivity while diffusivity is exponential in $1/T$; interpolating
+linearly in temperature fits a straight line through an exponential and errs most
+where the curvature is greatest, which is the cold end. On a nine-point grid the
+difference is 197 mV of terminal-voltage error at $-18$ °C against 1.8 mV.
+
 # Validation
 
 The test suite is anchored to closed-form results rather than to recorded
@@ -112,25 +129,43 @@ by finite volume; structural exactness of the mass balance at every order;
 stability of the discretisation at $\Delta t = 100\,R^2/D$; and agreement between
 generated C and its mirror at machine precision.
 
-Two defects found this way are worth recording, since both would have been
-invisible to a regression test. A spurious Faraday constant in the exchange
-current density inflated it by five orders of magnitude and collapsed the kinetic
-overpotential to microvolts, leaving a model that ran and looked plausible while
-having no charge-transfer resistance; a plausibility bound on $i_0$ now guards it.
-And a lookup table whose domain covered only the bulk stoichiometry window
-saturated under load, producing a 138 millivolt error that the three-leg
-comparison localised immediately.
+Several defects found this way are worth recording, since none would have been
+caught by a regression test comparing against stored output. A spurious Faraday
+constant in the exchange current density inflated it by five orders of magnitude
+and collapsed the kinetic overpotential to microvolts, leaving a model that ran
+and looked plausible while having no charge-transfer resistance. A lookup table
+whose domain covered only the bulk stoichiometry window saturated under load,
+producing a 138 millivolt error that the three-leg comparison localised
+immediately. A Tafel form for lithium plating, lacking a reverse branch, predicted
+deposition at every potential including open circuit, and over a simulated month
+of storage plated out an entire cell; Butler-Volmer kinetics, whose branches
+cancel exactly at the onset potential, replaced it. And conservation identities
+were found to depend on the accuracy of a matrix exponential over a stiff
+generator, differing between linear-algebra backends at extreme step sizes, and
+are now projected back explicitly after discretisation.
+
+Extending the model set produced one result worth reporting in its own right.
+With interphase growth and plating both active, total capacity loss is U-shaped in
+temperature: growth is Arrhenius and dominates the hot arm, plating is driven by
+sluggish transport and dominates the cold one, and the optimum shifts upward as
+charge rate increases. Both the shape and the attribution of each arm to the
+correct mechanism are asserted as tests.
 
 # Limitations
 
-The models are isothermal, with temperature handled by rebuilding and
-gain-scheduling. Electrolyte dynamics are not represented, so the formulation is a
-single particle model with lumped series resistance rather than SPMe. The posterior
+The thermal model uses a single lumped node, which is what can be identified from
+the surface measurements a battery-management unit actually has; radial gradients
+within a cylindrical cell are not resolved. Electrolyte transport coefficients are
+held at bulk values, which preserves linearity and offline discretisation at the
+cost of accuracy under severe depletion; the model reports its own validity rather
+than extrapolating silently. Degradation parameters are representative rather than
+fitted, since published interphase rate constants span several orders of
+magnitude. Loss of active material through particle cracking, transition-metal
+dissolution and positive-electrode side reactions is not modelled. The posterior
 covariance is optimistic during long open-circuit rests, because a single voltage
 measurement cannot separate the two electrodes; this is asserted as a test rather
-than concealed. Capacity fade is modelled as loss of active material only.
-Cycle-count figures are modelled for a Cortex-M4F rather than measured on
-hardware.
+than concealed. Cycle-count figures are modelled for a Cortex-M4F rather than
+measured on hardware.
 
 # Acknowledgements
 
