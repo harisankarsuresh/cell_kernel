@@ -173,6 +173,47 @@ def test_verify_compiles_and_reports(tmp_path, capsys):
     assert "generated C vs NumPy mirror" in report
 
 
+def test_charge_reports_a_grid(capsys):
+    assert run("charge", "--max-c-rate", "2.0") == 0
+    out = capsys.readouterr().out
+    lines = [line for line in out.splitlines() if line.strip().startswith("0.")]
+    assert len(lines) >= 5
+    rates = [float(value) for line in lines for value in line.split()[1:]]
+    assert all(0.0 <= rate <= 2.0 + 1e-9 for rate in rates), "must respect the ceiling"
+
+
+def test_charge_accepts_a_single_temperature(capsys):
+    assert run("charge", "--temperature", "263.15") == 0
+    assert "-10C" in capsys.readouterr().out
+
+
+def test_charge_is_stricter_in_the_cold(capsys):
+    """The whole point of the subcommand, checked rather than assumed."""
+    run("charge", "--temperature", "263.15", "313.15")
+    rows = [
+        line.split()
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("0.7")
+    ]
+    assert rows, "expected a row at 70% state of charge"
+    cold, warm = float(rows[0][1]), float(rows[0][2])
+    assert cold < warm
+
+
+def test_age_reports_the_u_shape(capsys):
+    assert run("age", "--cycles", "50") == 0
+    out = capsys.readouterr().out
+    assert "plating" in out
+    assert "interphase" in out
+    assert "Best at" in out
+
+
+def test_temperature_dependent_commands_warn_about_borrowed_parameters(capsys):
+    """Silently substituting activation energies would be the worse failure."""
+    run("charge", "--temperature", "298.15")
+    assert "activation energies" in capsys.readouterr().err
+
+
 def test_verify_without_a_compiler_fails_helpfully(tmp_path, capsys, monkeypatch):
     """A missing toolchain is a setup problem, and should read like one."""
     monkeypatch.setattr("cellkernel.verify.find_compiler", lambda: None)

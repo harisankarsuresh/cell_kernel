@@ -1,11 +1,13 @@
 """Command-line interface.
 
-Four subcommands, each mapping onto one thing a person actually wants to do::
+Each subcommand maps onto one thing a person actually wants to do::
 
     cellkernel roms                       compare reduced-order models
     cellkernel generate build/est         emit a C estimator
     cellkernel verify build/est           compile it and check it against Python
     cellkernel simulate --out run.csv     produce a synthetic record
+    cellkernel charge --temperature 263   find the safe charging rate
+    cellkernel age --cycles 500           project capacity fade
 
 Run ``cellkernel <command> --help`` for options.
 """
@@ -46,7 +48,7 @@ def _build_model(args: argparse.Namespace) -> SPM:
     )
 
 
-def _add_model_options(parser: argparse.ArgumentParser) -> None:
+def _add_model_options(parser: argparse.ArgumentParser, temperature: bool = True) -> None:
     parser.add_argument(
         "--chemistry", choices=sorted(_CHEMISTRIES), default="nmc", help="built-in parameter set"
     )
@@ -55,9 +57,12 @@ def _add_model_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--order", type=int, default=3, help="states per electrode")
     parser.add_argument("--dt", type=float, default=1.0, help="sample period in seconds")
-    parser.add_argument(
-        "--temperature", type=float, default=None, help="isothermal temperature in kelvin"
-    )
+    if temperature:
+        # Suppressed by the subcommands that sweep temperature and therefore need
+        # to take a list rather than a single value.
+        parser.add_argument(
+            "--temperature", type=float, default=None, help="isothermal temperature in kelvin"
+        )
 
 
 def _cmd_roms(args: argparse.Namespace) -> int:
@@ -216,6 +221,100 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Representative activation energies, used by the subcommands that need
+#: temperature-dependent transport. The built-in parameter sets deliberately ship
+#: without them -- see ``CellParameters.with_activation_energies`` -- so the CLI
+#: supplies a set and says so rather than silently modelling a cell whose
+#: diffusivity does not respond to temperature at all.
+_DEFAULT_ACTIVATION = dict(
+    diffusion_negative=35_000.0,
+    diffusion_positive=30_000.0,
+    reaction_negative=35_000.0,
+    reaction_positive=17_800.0,
+)
+
+
+def _thermal_cell(name: str) -> CellParameters:
+    cell = _cell(name)
+    if cell.negative.diffusion_activation_energy > 0.0:
+        return cell
+    print(
+        "note: this parameter set ships no activation energies, so representative "
+        "ones are being used. Supply your own with with_activation_energies() "
+        "before trusting any number that depends on temperature.",
+        file=sys.stderr,
+    )
+    return cell.with_activation_energies(**_DEFAULT_ACTIVATION)
+
+
+def _cmd_charge(args: argparse.Namespace) -> int:
+    from .degradation import DegradationModel
+    from .protocols import ChargeLimits, plating_limited_current
+
+    cell = _thermal_cell(args.chemistry)
+    ageing = DegradationModel(cell)
+    limits = ChargeLimits(
+        max_c_rate=args.max_c_rate,
+        max_voltage=cell.voltage_limits[1],
+        plating_margin=args.margin,
+    )
+    temperatures = args.temperature or [263.15, 273.15, 283.15, 298.15, 313.15]
+
+    print(f"{cell.name}: largest charge rate holding the electrode")
+    print(f"{1e3 * args.margin:.0f} mV above the lithium plating onset, in C\n")
+    print(f"  {'soc':>6s}" + "".join(f"{t - 273.15:>9.0f}C" for t in temperatures))
+    print("  " + "-" * (6 + 10 * len(temperatures)))
+    for soc in (0.1, 0.3, 0.5, 0.7, 0.9):
+        cells = []
+        for temperature in temperatures:
+            model = SPM(cell, dt=args.dt, rom=args.rom, order=args.order, temperature=temperature)
+            allowed = plating_limited_current(model, ageing, model.initial_state(soc), limits)
+            cells.append(f"{allowed / cell.nominal_capacity:9.2f}")
+        print(f"  {soc:6.2f}" + "".join(cells))
+    print(
+        "\nA fixed-rate charger has to sit under the worst entry in this grid.\n"
+        "The limit is set by the potential at the particle surface, which is not\n"
+        "observable from the terminals -- which is the whole reason for the model."
+    )
+    return 0
+
+
+def _cmd_age(args: argparse.Namespace) -> int:
+    from .degradation import DegradationModel
+
+    cell = _thermal_cell(args.chemistry)
+    ageing = DegradationModel(cell)
+    temperatures = args.temperature or [263.15, 283.15, 298.15, 313.15, 328.15]
+
+    print(f"{cell.name}: {args.cycles} cycles at {args.c_rate:g}C\n")
+    print(
+        f"  {'T':>8s} {'interphase':>12s} {'dead metal':>12s} {'retention':>11s} {'dominant':>11s}"
+    )
+    print("  " + "-" * 58)
+    best = None
+    for temperature in temperatures:
+        model = SPM(cell, dt=args.dt, rom=args.rom, order=args.order, temperature=temperature)
+        state = ageing.initial_state()
+        for _ in range(args.cycles):
+            ageing.age_over_cycle(model, state, c_rate=args.c_rate, temperature=temperature)
+        retention = ageing.capacity_retention(state)
+        dominant = "plating" if state.lithium_dead > state.lithium_lost else "interphase"
+        print(
+            f"  {temperature - 273.15:+7.1f}C {1e3 * state.lithium_lost:11.2f}m "
+            f"{1e3 * state.lithium_dead:11.2f}m {retention:11.4f} {dominant:>11s}"
+        )
+        if best is None or retention > best[1]:
+            best = (temperature, retention)
+    assert best is not None
+    print(
+        f"\nBest at {best[0] - 273.15:+.0f} C. Neither extreme is safe, and for opposite\n"
+        "reasons: heat drives interphase growth, cold drives plating. Parameters\n"
+        "here are representative rather than fitted, so read the shape of the\n"
+        "curve and not the absolute numbers."
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cellkernel",
@@ -269,6 +368,34 @@ def build_parser() -> argparse.ArgumentParser:
     simulate.add_argument("--noise", type=float, default=0.0, help="voltage noise std, volts")
     simulate.add_argument("--seed", type=int, default=0)
     simulate.set_defaults(func=_cmd_simulate)
+
+    charge = subparsers.add_parser("charge", help="largest charge rate that avoids lithium plating")
+    _add_model_options(charge, temperature=False)
+    charge.add_argument(
+        "--temperature",
+        type=float,
+        nargs="*",
+        default=None,
+        help="temperatures in kelvin (default: a spread from -10 to 40 C)",
+    )
+    charge.add_argument("--max-c-rate", type=float, default=3.0, help="hardware ceiling")
+    charge.add_argument(
+        "--margin", type=float, default=0.01, help="volts to hold above the plating onset"
+    )
+    charge.set_defaults(func=_cmd_charge)
+
+    age = subparsers.add_parser("age", help="project capacity fade over cycles")
+    _add_model_options(age, temperature=False)
+    age.add_argument(
+        "--temperature",
+        type=float,
+        nargs="*",
+        default=None,
+        help="temperatures in kelvin (default: a spread from -10 to 55 C)",
+    )
+    age.add_argument("--cycles", type=int, default=300)
+    age.add_argument("--c-rate", type=float, default=1.0)
+    age.set_defaults(func=_cmd_age)
 
     return parser
 

@@ -62,6 +62,14 @@ Generate an estimator, compile it, and check it:
 cellkernel verify build/estimator --precision float
 ```
 
+Ask how fast the cell can be charged at −10 °C without plating lithium, and what
+three hundred cycles will cost it at each temperature:
+
+```bash
+cellkernel charge --temperature 263.15 298.15
+cellkernel age --cycles 300
+```
+
 Or from Python:
 
 ```python
@@ -248,6 +256,13 @@ Parameters are representative, not fitted, and the module says so: reported inte
 
 Reproduce with `python examples/07_degradation.py`.
 
+Or from the command line, without writing any Python:
+
+```bash
+cellkernel charge --temperature 263.15 313.15   # safe charge rate, by state of charge
+cellkernel age --cycles 300                     # capacity fade, by temperature
+```
+
 ### 7. Charging as fast as the physics allows
 
 `cellkernel.protocols` inverts the plating criterion: given a state and a temperature, `plating_limited_current` returns the largest charging current that keeps the electrode a stated margin above the onset. Feeding that back as the setpoint gives a charge that is aggressive where it can be and cautious where it must be.
@@ -339,7 +354,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 552 tests
+pytest                      # 557 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 
