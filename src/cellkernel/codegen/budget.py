@@ -68,7 +68,9 @@ class ResourceBudget:
         return "\n".join(lines)
 
 
-def estimate_budget(spec: EstimatorSpec, precision: str = "double") -> ResourceBudget:
+def estimate_budget(
+    spec: EstimatorSpec, precision: str = "double", scheduled: bool = False
+) -> ResourceBudget:
     """Count the resources a generated estimator needs.
 
     Notes
@@ -104,18 +106,46 @@ def estimate_budget(spec: EstimatorSpec, precision: str = "double") -> ResourceB
     word = 4 if precision == "float" else 8
 
     n_table = spec.negative.ocp_table.n + spec.positive.ocp_table.n
-    flash_words = (
-        n * n  # A
-        + n  # B
-        + n * n  # process noise covariance
-        + n * n  # initial covariance
-        + spec.n_negative  # uniform map, negative
-        + spec.n_positive  # uniform map, positive
-        + 2 * spec.n_negative  # surface and bulk rows, negative
-        + 2 * spec.n_positive  # surface and bulk rows, positive
-        + n_table
-    )
-    ram_words = n + n * n
+    if scheduled:
+        # Transition, input and surface-output tables are replicated per grid
+        # point; the bulk row and the potential tables are not, because neither
+        # depends on temperature.
+        grid = int(spec.temperature_grid.size)
+        per_point = (
+            spec.n_negative**2
+            + spec.n_positive**2
+            + spec.n_negative
+            + spec.n_positive  # B columns
+            + spec.n_negative
+            + spec.n_positive  # surface rows
+            + 2  # surface feedthrough terms
+            + 2  # Arrhenius factors
+        )
+        flash_words = (
+            grid * per_point
+            + grid  # the temperature grid itself
+            + 2 * n * n  # the two covariances
+            + spec.n_negative  # uniform maps
+            + spec.n_positive
+            + spec.n_negative  # bulk row
+            + n_table
+        )
+        # The blended coefficients live in the instance so they are computed once
+        # per temperature change rather than once per call.
+        ram_words = n + n * n + n * n + n + spec.n_negative + spec.n_positive + 6
+    else:
+        flash_words = (
+            n * n  # A
+            + n  # B
+            + n * n  # process noise covariance
+            + n * n  # initial covariance
+            + spec.n_negative  # uniform map, negative
+            + spec.n_positive  # uniform map, positive
+            + 2 * spec.n_negative  # surface and bulk rows, negative
+            + 2 * spec.n_positive  # surface and bulk rows, positive
+            + n_table
+        )
+        ram_words = n + n * n
     stack_words = n * n + 3 * n  # scratch AP, plus h, ph and gain
 
     # Arithmetic per full predict-and-correct step.
@@ -127,6 +157,12 @@ def estimate_budget(spec: EstimatorSpec, precision: str = "double") -> ResourceB
     divides = n + 6  # Kalman gain, plus the concentration and asinh quotients
     sqrts = 6  # two exchange currents and their derivatives, plus asinh
     logs = 2
+    if scheduled:
+        # Two Arrhenius factors for diffusivity plus two for the reaction rates,
+        # charged only when the measured temperature actually changes; a thermistor
+        # is read far more slowly than this loop runs, so the cache usually hits.
+        logs += 4
+        multiplies += spec.n_negative**2 + spec.n_positive**2 + 2 * n
 
     cycles = (
         multiplies

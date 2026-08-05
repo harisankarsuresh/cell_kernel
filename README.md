@@ -189,6 +189,10 @@ Activation energies are deliberately **not** shipped with the parameter sets —
 
 Reproduce with `python examples/05_thermal_coupling.py`.
 
+`generate_scheduled()` emits this as embedded C, with one deliberate change: **temperature becomes an input rather than a state.** Any pack worth running a physics-based estimator on has thermistors, so temperature is a measurement, not an unknown. Treating it as one keeps the covariance the size it was, keeps heat generation and its poorly-identified thermal parameters out of the firmware entirely, and leaves the Kalman structure identical to the isothermal case — what is generated is the same estimator with temperature-dependent coefficients, not a differently shaped one. It is also the better estimate: temperature is only weakly observable from terminal voltage, so a filter that infers it loses to a thermistor costing a few cents.
+
+The schedule costs less than it sounds. Against the isothermal generator, on a 6-state model with a 9-point grid in single precision: **1.4× the flash and 2.3× the RAM** — 3.6 kB and 384 B — because the potential tables dominate flash and are shared across the grid. Blended coefficients are cached and rebuilt only when the measured temperature changes, which for a thermistor read far more slowly than the control loop means the cache usually hits. Generated C agrees with its NumPy mirror to 8.9e-16 V in double precision, including while temperature ramps across grid boundaries mid-run.
+
 ### 5. Estimators
 
 `EKF` (Joseph-form covariance, optional Gauss-Newton iteration), `UKF` (sigma points on the measurement only — for an affine map the unscented transform is exact, so propagating them through the linear process would compute the same numbers more slowly and *less* accurately), and `DualEKF` (adds capacity retention and resistance growth).
@@ -239,7 +243,8 @@ A 3 mV gap between generated C and a reference is unremarkable if it is table re
 
 Stated plainly, because a tool that hides these is worse than one that does not exist.
 
-- **The thermal model is a single node, and code generation does not yet cover it.** One lumped node is what can actually be identified from a battery-management unit's own measurements, which are surface temperature at best; radial gradients inside a cylindrical cell reach tens of kelvin at high rate and are not represented. Separately, `generate()` currently emits the isothermal `SPM` only — the temperature schedule works in Python but the C path has not been extended to carry it, so a generated estimator is still pinned to one operating point.
+- **The thermal model is a single node.** One lumped node is what can actually be identified from a battery-management unit's own measurements, which are surface temperature at best. Radial gradients inside a cylindrical cell reach tens of kelvin at high rate and are not represented.
+- **Generated code takes temperature as an input, and does not estimate it.** `generate_scheduled()` emits an estimator valid across a temperature range, but it must be given a thermistor reading; the Python `ThermalSPM` can infer temperature from voltage, and that capability does not cross to C. This is a deliberate division rather than an omission — see below — but if you have no temperature sensor, the generated path is not for you.
 - **Temperature is weakly observable from voltage alone.** The filter infers it through its effect on polarisation, which is indirect and slow. Measured state-of-charge error on a cold 1.5C discharge settles near 3.5% with a temperature state against 0.15% for the isothermal model on a comparable run. If a thermistor is available, use it; a measured cell temperature is worth more than any amount of filter tuning here.
 - **No electrolyte dynamics.** This is a single particle model with a lumped series resistance, not SPMe. Electrolyte concentration polarisation is not represented, which matters above roughly 3C and in thick electrodes.
 - **The posterior covariance is optimistic at open circuit.** One voltage measurement cannot separate the two electrodes; there is a direction in state space that voltage never observes, and only current integration couples them. The reported standard deviation comes out several times smaller than the true error during long rests. This is asserted as a test rather than hidden, so it will be noticed when fixed.
@@ -250,7 +255,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 310 tests
+pytest                      # 332 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 

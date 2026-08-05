@@ -104,16 +104,43 @@ def _worst_error(rom, lo_decade: float, hi_decade: float, points: int = 30) -> f
 
 
 def _cmd_generate(args: argparse.Namespace) -> int:
-    from .codegen import generate
+    from .codegen import generate, generate_scheduled
 
-    model = _build_model(args)
-    project = generate(
-        model,
-        args.output,
-        precision=args.precision,
-        table_points=args.table_points,
-        max_c_rate=args.max_c_rate,
-    )
+    if getattr(args, "scheduled", False):
+        from .models import ThermalSPM
+
+        cell = _cell(args.chemistry)
+        # A schedule over a cell with no activation energies would interpolate
+        # between identical matrices, so representative values are supplied when
+        # the parameter set leaves them at zero. Fit your own before shipping.
+        if cell.negative.diffusion_activation_energy == 0.0:
+            cell = cell.with_activation_energies(
+                diffusion_negative=35_000.0,
+                diffusion_positive=30_000.0,
+                reaction_negative=35_000.0,
+                reaction_positive=17_800.0,
+            )
+            print(
+                "note: parameter set carries no activation energies; using "
+                "representative literature values for the schedule.\n",
+                file=sys.stderr,
+            )
+        model = ThermalSPM(cell, dt=args.dt, rom=args.rom, order=args.order)
+        project = generate_scheduled(
+            model,
+            args.output,
+            precision=args.precision,
+            table_points=args.table_points,
+            max_c_rate=args.max_c_rate,
+        )
+    else:
+        project = generate(
+            _build_model(args),
+            args.output,
+            precision=args.precision,
+            table_points=args.table_points,
+            max_c_rate=args.max_c_rate,
+        )
     print(project)
     print()
     print(project.budget.summary())
@@ -211,6 +238,12 @@ def build_parser() -> argparse.ArgumentParser:
     generate_cmd.add_argument("--table-points", type=int, default=257)
     generate_cmd.add_argument(
         "--max-c-rate", type=float, default=3.0, help="highest C-rate the tables must cover"
+    )
+    generate_cmd.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="emit a temperature-scheduled estimator that takes measured "
+        "temperature as an input, valid across a range rather than at one point",
     )
     generate_cmd.set_defaults(func=_cmd_generate)
 

@@ -42,7 +42,13 @@ import numpy as np
 from ..codegen import GeneratedProject
 from ..codegen.spec import ReferenceEstimator, table_backed_model
 
-__all__ = ["VerificationReport", "find_compiler", "compile_project", "verify"]
+__all__ = [
+    "VerificationReport",
+    "compile_project",
+    "find_compiler",
+    "verify",
+    "verify_scheduled",
+]
 
 
 def find_compiler() -> str | None:
@@ -108,7 +114,9 @@ class VerificationReport:
         tol_v = 1e-9 if self.precision == "double" else 5e-4
         tol_soc = 1e-10 if self.precision == "double" else 1e-4
         ok = self.max_voltage_error_vs_mirror < tol_v and self.max_soc_error_vs_mirror < tol_soc
-        if self.mode == "openloop":
+        # A NaN marks a leg that does not apply to this configuration rather than
+        # one that failed, so it is skipped rather than treated as infinite error.
+        if self.mode == "openloop" and not np.isnan(self.max_voltage_error_mirror_vs_model):
             ok = ok and self.max_voltage_error_mirror_vs_model < 1e-9
         return ok
 
@@ -122,7 +130,7 @@ class VerificationReport:
             f"    generated C vs NumPy mirror, voltage   {self.max_voltage_error_vs_mirror:.3e} V",
             f"    generated C vs NumPy mirror, SoC       {self.max_soc_error_vs_mirror:.3e}",
         ]
-        if self.mode == "openloop":
+        if self.mode == "openloop" and not np.isnan(self.max_voltage_error_mirror_vs_model):
             lines += [
                 f"    mirror vs table-backed model, voltage  "
                 f"{self.max_voltage_error_mirror_vs_model:.3e} V",
@@ -138,7 +146,7 @@ class VerificationReport:
                 f"{self.max_voltage_error_total:.3e} V"
                 f"  ({self.max_voltage_error_total * 1e3:.3f} mV)",
             ]
-        else:
+        elif self.mode == "filter":
             lines += [
                 "",
                 "  the remaining legs are not evaluated in filter mode: the mirror",
@@ -148,7 +156,24 @@ class VerificationReport:
                 "  measure model fidelity, and filter mode to exercise the Kalman",
                 "  path -- which the first leg above does.",
             ]
+        else:
+            lines += [
+                "",
+                "  the remaining legs do not apply to a scheduled estimator: it is",
+                "  given temperature while the Python thermal model predicts it, so",
+                "  the two solve different problems and any gap between them would",
+                "  say nothing about code generation. Schedule fidelity is measured",
+                "  separately, against exactly rebuilt models, in test_thermal.py.",
+            ]
         return "\n".join(lines)
+
+
+def _sources(project: GeneratedProject) -> list[str]:
+    stem = "cellkernel_scheduled" if project.scheduled else "cellkernel_estimator"
+    return [
+        str(project.directory / "ck_harness.c"),
+        str(project.directory / f"{stem}.c"),
+    ]
 
 
 def compile_project(project: GeneratedProject, compiler: str | None = None) -> tuple[Path, str]:
@@ -173,8 +198,7 @@ def compile_project(project: GeneratedProject, compiler: str | None = None) -> t
         "-Werror",
         "-o",
         str(out),
-        str(project.directory / "ck_harness.c"),
-        str(project.directory / "cellkernel_estimator.c"),
+        *_sources(project),
         "-lm",
     ]
     done = subprocess.run(cmd, capture_output=True, text=True)
@@ -300,6 +324,101 @@ def verify(
             np.max(np.abs(table_run["voltage"] - exact["voltage"]))
         ),
         max_voltage_error_total=total,
+        table_error_volts=project.budget.table_error_volts,
+        compile_warnings=warnings,
+    )
+
+
+def verify_scheduled(
+    project: GeneratedProject,
+    model,
+    current: np.ndarray,
+    temperature: np.ndarray | float,
+    initial_soc: float = 1.0,
+    compiler: str | None = None,
+    mode: str = "openloop",
+) -> VerificationReport:
+    """Compile and cross-check a temperature-scheduled estimator.
+
+    Only the first two legs of the three-way comparison apply here. Generated C
+    is checked against its NumPy mirror, which is the leg that validates the
+    generator. The third leg -- against a full-fidelity Python model -- has no
+    counterpart, because the generated estimator is given temperature while
+    :class:`~cellkernel.models.thermal.ThermalSPM` predicts it, so the two are
+    solving different problems and any difference between them would say nothing
+    about code generation. Model fidelity for the scheduled path is covered
+    instead by ``tests/test_thermal.py``, which measures the schedule against
+    exactly rebuilt models.
+
+    Parameters
+    ----------
+    project
+        Result of :func:`cellkernel.codegen.generate_scheduled`.
+    model
+        The :class:`~cellkernel.models.thermal.ThermalSPM` it came from, used to
+        produce the reference voltages that drive the filter path.
+    current
+        Current profile in amperes, positive on discharge.
+    temperature
+        Cell temperature in kelvin, scalar or one value per sample.
+    initial_soc
+        Starting state of charge.
+    compiler
+        Override the detected compiler.
+    mode
+        ``"openloop"`` or ``"filter"``.
+    """
+    if not project.scheduled:
+        raise ValueError("use verify() for an isothermal project")
+    current = np.asarray(current, dtype=float).reshape(-1)
+    temperature = np.broadcast_to(np.asarray(temperature, dtype=float), current.shape).astype(float)
+
+    executable, warnings = compile_project(project, compiler)
+
+    # Reference voltages come from the Python thermal model, driven with the same
+    # current. They only need to be a plausible measurement sequence for the
+    # filter path; the comparison that matters is C against the mirror.
+    reference = model.simulate(current, soc0=initial_soc, temperature=float(temperature[0]))
+    measured = reference["voltage"]
+
+    buffer = io.StringIO()
+    for i_k, t_k, v_k in zip(current, temperature, measured, strict=True):
+        buffer.write(f"{float(i_k):.17g},{float(t_k):.17g},{float(v_k):.17g}\n")
+    done = subprocess.run(
+        [str(executable), mode, f"{float(initial_soc):.17g}"],
+        input=buffer.getvalue(),
+        capture_output=True,
+        text=True,
+    )
+    if done.returncode != 0:
+        raise RuntimeError(f"harness failed: {done.stderr}")
+    rows = list(csv.DictReader(io.StringIO(done.stdout)))
+    if not rows:
+        raise RuntimeError(f"harness produced no output; stderr: {done.stderr}")
+    c_out = {key: np.array([float(row[key]) for row in rows]) for key in rows[0]}
+
+    mirror = project.reference()
+    mirror.init(initial_soc, float(temperature[0]))
+    m_soc = np.empty(current.size)
+    m_voltage = np.empty(current.size)
+    for k in range(current.size):
+        m_soc[k] = mirror.soc()
+        m_voltage[k] = mirror.voltage(float(current[k]), float(temperature[k]))
+        mirror.predict(float(current[k]), float(temperature[k]))
+        if mode == "filter":
+            mirror.update(float(current[k]), float(temperature[k]), float(measured[k]))
+
+    return VerificationReport(
+        compiler=compiler or (find_compiler() or "cc"),
+        precision=project.precision,
+        mode=mode,
+        n_samples=int(current.size),
+        n_states=project.spec.n_states,
+        max_voltage_error_vs_mirror=float(np.max(np.abs(c_out["voltage"] - m_voltage))),
+        max_soc_error_vs_mirror=float(np.max(np.abs(c_out["soc"] - m_soc))),
+        max_voltage_error_mirror_vs_model=float("nan"),
+        max_voltage_error_table_vs_exact=float("nan"),
+        max_voltage_error_total=float("nan"),
         table_error_volts=project.budget.table_error_volts,
         compile_warnings=warnings,
     )

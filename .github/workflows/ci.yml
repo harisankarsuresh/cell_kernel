@@ -102,6 +102,25 @@ jobs:
           clang -std=c99 -O2 -Wall -Wextra -Wpedantic -Werror \
                 -Wconversion -Wshadow -Wstrict-prototypes -Wmissing-prototypes \
                 -c cellkernel_estimator.c -o /dev/null
+      # The temperature-scheduled estimator is a separate emitter with its own
+      # tables and blending, so it gets the same scrutiny rather than riding on
+      # the isothermal one having passed.
+      - name: Generate the scheduled variant
+        run: python -m cellkernel.cli generate build/ci_scheduled --precision float --order 3 --scheduled
+      - name: Compile the scheduled variant with gcc, extra warnings
+        run: |
+          cd build/ci_scheduled
+          gcc -std=c99 -O2 -Wall -Wextra -Wpedantic -Werror \
+              -Wconversion -Wshadow -Wstrict-prototypes -Wmissing-prototypes \
+              -Wcast-qual -Wundef -Wdouble-promotion \
+              -c cellkernel_scheduled.c -o /dev/null
+      - name: Compile the scheduled variant with clang, extra warnings
+        run: |
+          cd build/ci_scheduled
+          clang -std=c99 -O2 -Wall -Wextra -Wpedantic -Werror \
+                -Wconversion -Wshadow -Wstrict-prototypes -Wmissing-prototypes \
+                -c cellkernel_scheduled.c -o /dev/null
+
       - name: Undefined-behaviour sanitiser on the harness
         run: |
           cd build/ci
