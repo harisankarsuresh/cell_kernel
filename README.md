@@ -102,11 +102,18 @@ Five layers, each usable alone.
 
 Lithium diffusion in a spherical particle has the exact surface transfer function
 
-$$G(s) = \frac{R}{D}\,\frac{\sinh\xi}{\xi\cosh\xi - \sinh\xi},\qquad \xi = R\sqrt{s/D},$$
+```math
+G(s) = \frac{R}{D} \cdot \frac{\sinh\xi}{\xi\cosh\xi - \sinh\xi},
+\qquad \xi = R\sqrt{s/D}
+```
 
 which factors into an integrator carrying the mass balance and an analytic remainder:
 
-$$G(s) = \frac{3}{Rs}\,\hat H\!\left(\frac{R^2 s}{D}\right),\qquad \hat H(a) = 1 + \frac{a}{15} - \frac{a^2}{525} + \frac{2a^3}{23625} - \cdots$$
+```math
+G(s) = \frac{3}{Rs} \cdot \hat{H}\left(\frac{R^2 s}{D}\right),
+\qquad
+\hat{H}(a) = 1 + \frac{a}{15} - \frac{a^2}{525} + \frac{2a^3}{23625} - \cdots
+```
 
 Four families approximate it. All are delivered as discrete-time state-space systems, all keep the volume-averaged concentration as an exact state, and all are compared against closed-form results in the test suite:
 
@@ -123,7 +130,7 @@ The lower panel is the one that matters. A 6-state Padé model tracks the exact 
 
 Two details do most of the work:
 
-**Discretisation happens offline, by matrix exponential.** A hand-written embedded diffusion solver usually steps explicitly, which is stable only for $\Delta t < \Delta r^2 / 2D$ — for a 6 µm particle that is milliseconds, far below a battery-management task period. Exponentiating the generator once, at build time, makes the online update a single dense matrix-vector product that is *unconditionally stable and exact for piecewise-constant current*. All the hard numerics move to the host.
+**Discretisation happens offline, by matrix exponential.** A hand-written embedded diffusion solver usually steps explicitly, which is stable only for $\Delta t \lt \Delta r^2 / 2D$ — for a 6 µm particle that is milliseconds, far below a battery-management task period. Exponentiating the generator once, at build time, makes the online update a single dense matrix-vector product that is *unconditionally stable and exact for piecewise-constant current*. All the hard numerics move to the host.
 
 **Padé coefficients are solved in exact rationals.** The Padé linear system is a Hankel matrix built from series coefficients spanning many orders of magnitude ($1$, $\tfrac1{15}$, $-\tfrac1{525}$, $\tfrac2{23625}$, $-\tfrac{37}{9095625}$, …). Solved in double precision it loses significant digits by order 5 and is unusable by order 8. Solved over `fractions.Fraction` it is exact at any order, and it happens once.
 
@@ -143,7 +150,13 @@ nmc811-graphite-5Ah
 
 `SPM` is two particles with reduced-order diffusion and symmetric Butler-Volmer kinetics:
 
-$$V = U_p(x_p) + \eta_p - U_n(x_n) - \eta_n - I R_c,\qquad \eta_k = \frac{2RT}{F}\operatorname{asinh}\frac{j_k}{2 i_{0,k}}$$
+```math
+V = U_p(x_p) + \eta_p - U_n(x_n) - \eta_n - I R_c
+```
+
+```math
+\eta_k = \frac{2RT}{F} \cdot \mathrm{asinh}\left(\frac{j_k}{2 i_{0,k}}\right)
+```
 
 `ECM` is the equivalent-circuit baseline it exists to displace, with each RC branch discretised exactly rather than by forward Euler.
 
@@ -219,7 +232,7 @@ The test suite is anchored to closed-form results wherever possible rather than 
 - $\sum_k \lambda_k^{-2} = 1/10$ over the roots of $\tan\lambda = \lambda$, *and* that the residual shrinks as $1/\pi^2 k$;
 - the steady-state surface offset $RN/5D$ — exactly for the polynomial and residualised spectral models, converging at second order for finite volume;
 - that the mass balance is structurally exact for every model at every order;
-- that zero-order-hold discretisation is stable at $\Delta t = 100\,R^2/D$;
+- that zero-order-hold discretisation is stable at $\Delta t = 100 R^2/D$;
 - that a rested cell's terminal voltage equals its open-circuit voltage to 1e-9 V;
 - that exchange current density lands in the physically plausible 0.1–30 A m⁻² band, which is the guard that caught a spurious Faraday constant collapsing the kinetic overpotential to microvolts;
 - that the unscented transform of the linear process reproduces $APA^\top$, and that tight sigma points lose precision doing so;
