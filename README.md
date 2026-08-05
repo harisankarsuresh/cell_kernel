@@ -6,6 +6,8 @@
 
 On a Cortex-M-class target, a 6-state single particle model with an extended Kalman filter costs **168 bytes of RAM, 2.6 kB of flash, and about 16 µs per step at 120 MHz**. The generated C agrees with the Python reference to **9e-16 V in double precision** and **7 µV in single precision**.
 
+The models are checked against [PyBaMM](https://github.com/pybamm-team/PyBaMM) rather than only against themselves — two independent implementations of the single particle model agree to **0.2 mV** at 0.5C. And the generated estimator answers the question a charger actually needs: `ck_max_charge_current` returns the fastest rate that will not plate lithium, in bounded time, on the microcontroller.
+
 ```
 verification PASS  (double, 6 states, 900 samples, openloop, gcc)
 
@@ -349,7 +351,9 @@ The middle panel shows what a single linearised correction actually does when se
 
 ### 10. Code generation, and evidence
 
-`generate()` emits `cellkernel_estimator.{h,c}` — no dynamic allocation, no global mutable state, fixed-size arrays, bounded execution time, no iteration, worst case equal to typical case. It compiles under `-std=c99 -Wall -Wextra -Wpedantic -Werror` with no warnings. Alongside it come a host harness, a `Makefile`, a `CMakeLists.txt`, and a `BUDGET.txt`:
+`generate()` emits `cellkernel_estimator.{h,c}` — no dynamic allocation, no global mutable state, fixed-size arrays, bounded execution time, worst case equal to typical case. It compiles under `-std=c99 -Wall -Wextra -Wpedantic -Werror` with no warnings.
+
+The filter path contains no loop whose trip count depends on data. The one routine that iterates, `ck_max_charge_current`, does a fixed 24 bisection steps with no convergence test and no early exit, which costs it two or three wasted halvings and buys the same property: the time it takes does not depend on what the cell is doing. CI checks that the early exit has not crept back in. Alongside it come a host harness, a `Makefile`, a `CMakeLists.txt`, and a `BUDGET.txt`:
 
 ```
 precision            float (4 bytes/word)
@@ -382,7 +386,8 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 - **The posterior covariance is optimistic at open circuit.** One voltage measurement cannot separate the two electrodes; there is a direction in state space that voltage never observes, and only current integration couples them. The reported standard deviation comes out several times smaller than the true error during long rests. This is asserted as a test rather than hidden, so it will be noticed when fixed.
 - **Lookup-table error is not uniform.** Worst-case interpolation error for the built-in graphite fit is 4.95 mV at 257 points, but it is confined entirely below 4% stoichiometry — the steep exponential rise, 3% of the table domain and below the operating window. Median error over the domain is 0.002 mV. Raise `table_points` if the extremes matter; `BUDGET.txt` reports the figure so the trade is explicit.
 - **Capacity retention is modelled as loss of active material** (flux scaling), not loss of lithium inventory. That makes it partially observable from pulse transients, which is correct for that mechanism and wrong for the other. Distinguishing them needs a second parameter.
-- **Cycle counts are modelled, not measured.** The structural claims — quadratic in state count, dominated by covariance propagation, no iteration — are reliable. The absolute number is a planning figure for a Cortex-M4F.
+- **Cycle counts are modelled, not measured.** The structural claims — quadratic in state count, dominated by covariance propagation, no data-dependent loop bounds — are reliable. The absolute number is a planning figure for a Cortex-M4F.
+- **PyBaMM agreement degrades with rate, for a reason not yet identified.** Two independent single particle models agree to 0.2 mV at 0.5C and 23 mV at 2C. The gap is *not* the reduced-order approximation — five families from 6 to 48 states give the same answer — so it is a difference between the models, and which one is closer to a real cell is not something this comparison can settle.
 
 ## Testing
 
@@ -404,6 +409,14 @@ The test suite is anchored to closed-form results wherever possible rather than 
 - that the generated C matches its mirror to machine precision.
 
 Where a finite-difference reference is used, the step size is chosen adaptively: with a state vector spanning `1e4` to `1e10` a fixed relative step makes the *reference* less accurate than the derivative it is checking, which is a uniquely misleading failure.
+
+Closed-form tests cannot catch a misunderstanding shared between a model and the test written by the same person, so a separate suite compares against PyBaMM. It needs `pip install pybamm` and skips without it.
+
+```bash
+pytest tests/test_pybamm_validation.py
+```
+
+Fourteen CI jobs run on every push: the suite on three operating systems and three Python versions, linting, coverage with a floor, every example end to end, the PyBaMM comparison, and the generated C compiled by both gcc and clang under conversion and shadowing warnings and then run under the undefined-behaviour and address sanitisers.
 
 ## Citing
 
