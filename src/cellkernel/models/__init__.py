@@ -1,12 +1,13 @@
 """Cell-level models.
 
 :class:`SPM` is the physics-based model: two particles, reduced-order solid
-diffusion, and Butler-Volmer kinetics. :class:`ThermalSPM` adds cell temperature
-as a state, with the reduced-order matrices gain-scheduled over temperature.
-:class:`ECM` is the equivalent-circuit baseline the other two are meant to
-displace.
+diffusion, and Butler-Volmer kinetics. :class:`SPMe` adds resolved salt transport
+across the sandwich, which matters above about 1C where the electrolyte stops
+behaving like a fixed resistance. :class:`ThermalSPM` adds cell temperature as a
+state, with the reduced-order matrices gain-scheduled over temperature.
+:class:`ECM` is the equivalent-circuit baseline the others are meant to displace.
 
-All three present the same interface
+All of them present the same interface
 (:class:`~cellkernel.models.base.CellModel`), so estimators, the code generator
 and the verification harness treat them identically.
 
@@ -22,6 +23,7 @@ the temperature it was calibrated at, and the thermal one when it does not.
 from .base import CellModel, ModelOutputs
 from .ecm import ECM
 from .spm import SPM
+from .spme import SPMe
 from .thermal import ThermalSPM
 
-__all__ = ["CellModel", "ECM", "ModelOutputs", "SPM", "ThermalSPM"]
+__all__ = ["CellModel", "ECM", "ModelOutputs", "SPM", "SPMe", "ThermalSPM"]

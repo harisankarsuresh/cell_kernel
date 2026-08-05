@@ -65,6 +65,10 @@ class ElectrodeParameters:
         treated as temperature independent.
     entropic_coefficient
         ``dU/dT`` in V K-1, used for reversible heat generation.
+    porosity
+        Electrolyte volume fraction in the coating. Only used by models that
+        resolve the electrolyte, such as :class:`~cellkernel.models.spme.SPMe`;
+        the single particle model ignores it.
     """
 
     thickness: float
@@ -79,6 +83,7 @@ class ElectrodeParameters:
     diffusion_activation_energy: float = 0.0
     reaction_activation_energy: float = 0.0
     entropic_coefficient: float = 0.0
+    porosity: float = 0.3
 
     @property
     def specific_area(self) -> float:
@@ -192,6 +197,15 @@ class CellParameters:
     contact_resistance: float = 0.0
     reference_temperature: float = 298.15
     thermal: ThermalParameters | None = None
+    #: Electrolyte transport. Ignored by models that do not resolve the
+    #: electrolyte, so the defaults are representative of a 1 M LiPF6 carbonate
+    #: blend rather than fitted to any particular cell.
+    separator_porosity: float = 0.47
+    electrolyte_diffusivity: float = 5.0e-10
+    transference_number: float = 0.2594
+    ionic_conductivity: float = 0.95
+    bruggeman: float = 1.5
+    thermodynamic_factor: float = 1.0
     name: str = "cell"
     notes: str = ""
     metadata: dict = field(default_factory=dict)
@@ -483,6 +497,7 @@ def chen2020_nmc811_graphite() -> CellParameters:
         stoich_at_0_soc=0.03,
         stoich_at_100_soc=0.90,
         entropic_coefficient=-6.0e-5,
+        porosity=0.25,
     )
     positive = ElectrodeParameters(
         thickness=75.6e-6,
@@ -495,6 +510,7 @@ def chen2020_nmc811_graphite() -> CellParameters:
         stoich_at_0_soc=0.90,
         stoich_at_100_soc=0.27,
         entropic_coefficient=2.0e-5,
+        porosity=0.335,
     )
     (xn0, xn100), (xp0, xp100) = balanced_stoichiometry_window(
         negative, positive, area, capacity=5.0, voltage_limits=(2.5, 4.2)

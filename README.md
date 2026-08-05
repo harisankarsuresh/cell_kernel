@@ -162,7 +162,30 @@ V = U_p(x_p) + \eta_p - U_n(x_n) - \eta_n - I R_c
 
 The structural point: **the state dynamics are exactly linear.** Diffusion is linear in flux and flux is linear in current, so all nonlinearity lives in the voltage measurement. An extended Kalman filter on this model has *no linearisation error in its prediction step at all* — the usual complaint about EKFs does not apply, and the covariance propagation stays well behaved indefinitely.
 
-### 4. Temperature, when it cannot be ignored
+### 4. When the electrolyte stops being a resistor
+
+`SPMe` resolves salt transport across the sandwich — negative coating, separator, positive coating — instead of lumping it into a fitted series resistance. It adds the electrolyte ohmic drop, computed from geometry and conductivity rather than fitted, and the concentration overpotential that builds as salt is driven from one coating to the other.
+
+Below about 1C this buys nothing. A single particle model with a fitted resistance matches it to a few millivolts, has 6 states instead of 17, and is exactly linear. Use the simpler one.
+
+The reason it exists is that the electrolyte term is **not** a resistance. On a 2C step from rest:
+
+| time | concentration overpotential | as an equivalent resistance |
+|---|---|---|
+| 2 s | −4.1 mV | 0.41 mΩ |
+| 10 s | −13.9 mV | 1.39 mΩ |
+| 40 s | −22.4 mV | 2.24 mΩ |
+| 240 s | −23.0 mV | 2.31 mΩ |
+
+A fitted resistance has to pick one row of that table. Calibrate on a ten-second pulse and it under-predicts sustained discharge; calibrate on the settled value and it over-predicts every transient. Fitting harder does not help, because the thing being fitted has dynamics of its own — a timescale set by the sandwich thickness, not the particle.
+
+Salt is conserved exactly (the source integrates to zero by construction and the projection enforces it), the steady-state split is verified two independent ways — iterating the discretisation, and solving the singular continuous system with the mean pinned — and they agree to 1e-8. The state transition stays exactly linear, so this model keeps the property that makes an extended Kalman filter well behaved on it.
+
+Transport coefficients are held at their bulk values, which keeps the system linear and discretisable offline but means the model degrades as the electrolyte empties. It reports that rather than hiding it: `depletion()` returns the lowest coating concentration as a fraction of nominal, and `validity()` turns it into `good`, `degraded` or `extrapolating`. On this cell 2C is good and 5C is degraded.
+
+Reproduce with `python examples/06_electrolyte.py`.
+
+### 5. Temperature, when it cannot be ignored
 
 `ThermalSPM` adds cell temperature as a state: Bernardi heat generation, a lumped thermal node integrated exactly rather than by forward Euler, and Arrhenius feedback into both the kinetics and solid diffusion.
 
@@ -193,7 +216,7 @@ Reproduce with `python examples/05_thermal_coupling.py`.
 
 The schedule costs less than it sounds. Against the isothermal generator, on a 6-state model with a 9-point grid in single precision: **1.4× the flash and 2.3× the RAM** — 3.6 kB and 384 B — because the potential tables dominate flash and are shared across the grid. Blended coefficients are cached and rebuilt only when the measured temperature changes, which for a thermistor read far more slowly than the control loop means the cache usually hits. Generated C agrees with its NumPy mirror to 8.9e-16 V in double precision, including while temperature ramps across grid boundaries mid-run.
 
-### 5. Estimators
+### 6. Estimators
 
 `EKF` (Joseph-form covariance, optional Gauss-Newton iteration), `UKF` (sigma points on the measurement only — for an affine map the unscented transform is exact, so propagating them through the linear process would compute the same numbers more slowly and *less* accurately), and `DualEKF` (adds capacity retention and resistance growth).
 
@@ -216,7 +239,7 @@ The iterated EKF beats the unscented filter here, for a fraction of the cost.
 
 The middle panel shows what a single linearised correction actually does when seeded 15% wrong: it drives the estimate *above 100%* state of charge and then takes the whole cycle to crawl back, ending worse than open-loop coulomb counting. That is the failure mode the table above quantifies, and it is the reason `iterations` defaults to more than one. Reproduce with `python examples/02_estimate_state_of_charge.py`.
 
-### 6. Code generation, and evidence
+### 7. Code generation, and evidence
 
 `generate()` emits `cellkernel_estimator.{h,c}` — no dynamic allocation, no global mutable state, fixed-size arrays, bounded execution time, no iteration, worst case equal to typical case. It compiles under `-std=c99 -Wall -Wextra -Wpedantic -Werror` with no warnings. Alongside it come a host harness, a `Makefile`, a `CMakeLists.txt`, and a `BUDGET.txt`:
 
@@ -255,7 +278,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 332 tests
+pytest                      # 375 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 

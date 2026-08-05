@@ -24,6 +24,7 @@ from .base import (
     low_frequency_series,
     normalised_series_coefficients,
 )
+from .electrolyte import ElectrolyteDiffusion, ElectrolyteStateSpace
 from .finite_volume import FiniteVolumeDiffusion
 from .pade import PadeDiffusion, pade_coefficients
 from .polynomial import PolynomialDiffusion
@@ -33,6 +34,8 @@ from .spectral import SpectralDiffusion, zero_flux_eigenvalues
 __all__ = [
     "DiffusionROM",
     "DiscreteStateSpace",
+    "ElectrolyteDiffusion",
+    "ElectrolyteStateSpace",
     "FiniteVolumeDiffusion",
     "PadeDiffusion",
     "PolynomialDiffusion",
