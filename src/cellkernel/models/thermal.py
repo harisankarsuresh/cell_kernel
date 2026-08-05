@@ -446,6 +446,27 @@ class ThermalSPM(CellModel):
         jac[self._i_temp, self._i_temp] += self._decay
         return jac
 
+    def soc_jacobian(self) -> np.ndarray:
+        """Gradient of reported state of charge with respect to the state.
+
+        Constant, and zero in the temperature entry: state of charge is read from
+        the conserved average concentration, which warming the cell does not
+        change. Diffusivity moves, the profile relaxes differently, but the amount
+        of lithium in the particle is exactly what it was.
+
+        Without this the estimators fall back to a zero gradient and report a
+        state-of-charge uncertainty of zero, which is worse than reporting none.
+        """
+        neg = self.parameters.negative
+        span = neg.stoich_at_100_soc - neg.stoich_at_0_soc
+        grad = np.zeros(self.n_states)
+        # The bulk output row is temperature independent, so any scheduled system
+        # gives the same answer; take the first grid point.
+        grad[: self._n_neg] = self.schedule_negative.systems[0].C[1] / (
+            neg.max_concentration * span
+        )
+        return grad
+
     def _heat_jacobian(self, z: np.ndarray, current: float) -> np.ndarray:
         """Gradient of total heat generation with respect to the full state.
 

@@ -119,16 +119,32 @@ class CellModel(abc.ABC):
         hi = self.initial_state(0.6)
         return (hi - lo) / 0.2
 
-    def input_direction(self) -> np.ndarray:
+    def input_direction(self, current: float = 0.0) -> np.ndarray:
         """State-space column through which current enters, per ampere per sample.
 
-        Equal to ``step(x, 1) - step(x, 0)``, which is exact because the process
-        update is linear in current for every model here. This is the direction a
-        current-measurement error perturbs the state along, and therefore the
-        correct shape for a process-noise covariance.
+        This is the direction a current-measurement error perturbs the state
+        along, and therefore the correct shape for a process-noise covariance.
+
+        Evaluated as ``step(x, current + 1) - step(x, current)``. For the models
+        whose process update is linear in current -- the single particle model,
+        the electrolyte model and the equivalent circuit -- this is exact and
+        independent of where it is taken.
+
+        :class:`~cellkernel.models.thermal.ThermalSPM` is the exception, because
+        heat generation is quadratic in current, so its temperature row genuinely
+        depends on the operating point and ``current`` lets a caller who knows
+        the duty cycle ask about a representative one.
+
+        A one-sided difference, deliberately. A central difference would be the
+        obvious choice and is wrong here: dissipation is even in current, so
+        differencing symmetrically about zero cancels the resistive heating
+        exactly and leaves only the reversible term. The temperature row then
+        understates the thermal response by orders of magnitude, and a filter
+        given that as its process-noise shape trusts its own temperature
+        prediction far too much and diverges.
         """
         reference = self.initial_state(0.5)
-        return self.step(reference, 1.0) - self.step(reference, 0.0)
+        return self.step(reference, current + 1.0) - self.step(reference, current)
 
     def voltage(self, x: np.ndarray, current: float) -> float:
         """Terminal voltage in volts."""

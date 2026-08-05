@@ -15,6 +15,13 @@ __all__ = ["ScheduledStateSpace", "schedule_over_temperature"]
 #: dependency on the parameter layer.
 GAS_CONSTANT = 8.31446261815324
 
+#: Kept in step with :mod:`cellkernel.params`. Defined here rather than imported
+#: because ``cellkernel.rom`` deliberately does not depend on the parameter layer:
+#: a reduced-order diffusion model should be usable knowing only a radius and a
+#: diffusivity.
+_TEMPERATURE_FLOOR = 173.15
+_TEMPERATURE_CEILING = 373.15
+
 
 @dataclass(frozen=True)
 class ScheduledStateSpace:
@@ -98,14 +105,23 @@ class ScheduledStateSpace:
         object.__setattr__(self, "_grid_factors", grid_factors)
 
     def factor(self, temperature: float) -> float:
-        """Arrhenius scaling of diffusivity relative to the reference temperature."""
+        """Arrhenius scaling of diffusivity relative to the reference temperature.
+
+        Clamped to a physical temperature range for the same reason as
+        :func:`cellkernel.params._arrhenius`: an unscented filter carrying
+        temperature as a state will place sigma points outside it, and ``1/T``
+        then overflows the exponential and puts infinities into the covariance.
+        Only the blend weight is affected, and the weight is clipped to ``[0, 1]``
+        immediately afterwards regardless.
+        """
         if self.activation_energy == 0.0:
             return 1.0
+        bounded = min(max(float(temperature), _TEMPERATURE_FLOOR), _TEMPERATURE_CEILING)
         return float(
             np.exp(
                 self.activation_energy
                 / GAS_CONSTANT
-                * (1.0 / self.reference_temperature - 1.0 / float(temperature))
+                * (1.0 / self.reference_temperature - 1.0 / bounded)
             )
         )
 

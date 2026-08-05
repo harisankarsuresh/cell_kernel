@@ -155,6 +155,157 @@ class Estimator(abc.ABC):
         grad = self._soc_gradient()
         return float(np.sqrt(max(grad @ self.P @ grad, 0.0)))
 
+    # These two live on the base class rather than on one filter because they
+    # depend only on the model. Every estimator here needs the same shaped
+    # moments, and having them reachable from only one of them was an accident
+    # of which filter was written first.
+
+    @staticmethod
+    def suggest_initial_covariance(
+        model: CellModel,
+        soc_std: float = 0.1,
+        gradient_std_fraction: float = 0.02,
+        temperature_std: float = 2.0,
+    ) -> np.ndarray:
+        """Initial covariance for a stated state-of-charge uncertainty on a rested cell.
+
+        Seeding a filter is where scaling mistakes do the most damage: too small a
+        prior locks it onto a wrong start that no later data can undo, and a
+        badly *shaped* prior sends corrections into the wrong states. Expressing
+        the prior as "I know state of charge to within 10%" is something an
+        engineer can judge; picking a variance in squared moles per cubic metre is
+        not.
+
+        The result is a rank-one covariance along
+        :meth:`~cellkernel.models.base.CellModel.soc_direction` plus a small
+        isotropic floor:
+
+        .. math::
+
+            P_0 = \\sigma_z^{2} d d^{\\!\\top}
+                  + \\bigl( \\gamma \\sigma_z \\| d \\|_\\infty \\bigr)^{2} I .
+
+        The rank-one term encodes the physically correct statement -- a rested cell
+        of unknown charge is uncertain in its overall lithium content and in
+        nothing else. The floor keeps the matrix positive definite and admits a
+        little uncertainty about the internal gradient, which matters when the cell
+        was not in fact fully rested at power-up.
+
+        The floor is *isotropic*, which is only defensible while every state
+        carries the same units. It is derived from the largest entry of ``d``,
+        which for a diffusion model is a concentration of order 1e5 mol m-3, so
+        the floor is a few hundred of those -- small, and sensible.
+
+        Applied to a model that also carries temperature, the same number becomes
+        a prior standard deviation of several hundred kelvin. The filter then puts
+        the cell at 430 K on its first update, at −14 K on its fifth, and never
+        recovers; the concentration states are dragged along because the
+        temperature-dependent matrices go with them. The temperature state is
+        therefore excluded from the floor and given a prior of its own, which a
+        pack with thermistors knows to a couple of kelvin anyway.
+
+        Parameters
+        ----------
+        model
+            Model whose state space the covariance refers to.
+        soc_std
+            Prior standard deviation of state of charge.
+        gradient_std_fraction
+            Isotropic floor as a fraction of the dominant prior scale. Raise it if
+            the cell may be seeded shortly after a load rather than at true rest.
+        temperature_std
+            Prior standard deviation of cell temperature in kelvin, for models
+            carrying it as a state. Ignored by the others.
+        """
+        direction = np.asarray(model.soc_direction()).reshape(-1)
+        floor = (gradient_std_fraction * soc_std * np.max(np.abs(direction))) ** 2
+        diagonal = np.full(model.n_states, floor)
+
+        index = getattr(model, "temperature_index", None)
+        if index is not None:
+            direction = direction.copy()
+            direction[index] = 0.0
+            diagonal[index] = temperature_std**2
+
+        return soc_std**2 * np.outer(direction, direction) + np.diag(diagonal)
+
+    @staticmethod
+    def suggest_process_noise(
+        model: CellModel,
+        current_std: float = 0.05,
+        soc_drift_per_hour: float = 0.01,
+        temperature_std: float = 0.5,
+    ) -> np.ndarray:
+        """Process noise from a current-measurement error and a state-of-charge drift allowance.
+
+        Process noise is hard to set by inspection because its units are those of
+        the state, and a physics-based state vector mixes concentrations with modal
+        coordinates that have no intuitive scale. Two interpretable quantities are
+        combined instead.
+
+        The first is current-measurement error. An error of ``current_std`` amperes
+        perturbs the state along the input column ``b``, giving the rank-one term
+        :math:`\\sigma_I^{2} b b^{\\!\\top}`. This is exact for the mechanism it
+        describes, and it is correctly shaped: a mis-measured ampere cannot produce
+        an arbitrary state disturbance, only one proportional to how current enters.
+
+        The second is a drift allowance along
+        :meth:`~cellkernel.models.base.CellModel.soc_direction`, which covers what
+        the first term does not. Sensor error in practice is dominated by slowly
+        varying *bias* rather than white noise, and white noise of realistic
+        amplitude averages out to a negligible state-of-charge drift -- a 50 mA
+        white error on a 5 Ah cell at 1 Hz drifts under 0.02% per hour. Modelling
+        bias properly would mean augmenting the state, which is what
+        :class:`~cellkernel.estimators.dual.DualEKF` does for resistance. Short of
+        that, an explicit drift term keeps the filter willing to be corrected
+        during long stretches where voltage is uninformative.
+
+        A model carrying temperature as a state gets a third term, and the reason
+        is worth stating because getting it wrong makes the filter diverge rather
+        than merely mistune. The input column of such a model has a nonzero
+        temperature entry, because current generates heat, so the rank-one
+        current term would place temperature in rigid correlation with the
+        diffusion states. It is not: temperature uncertainty comes from the
+        ambient and from a heat-transfer coefficient nobody has measured
+        accurately, and those have nothing to do with the current sensor. Left
+        correlated, a voltage residual is partly absorbed by a temperature
+        correction -- and since temperature is only weakly observable from
+        terminal voltage, the filter walks it away and takes the concentration
+        states with it. The temperature entry is therefore removed from the
+        current column and given an independent variance of its own.
+
+        Parameters
+        ----------
+        model
+            Model whose state space the covariance refers to.
+        current_std
+            Standard deviation of the current measurement, in amperes.
+        soc_drift_per_hour
+            Additional random-walk allowance on state of charge, per hour.
+        temperature_std
+            Per-sample thermal model error in kelvin, for models carrying
+            temperature as a state. Ignored by the others.
+        """
+        b = np.asarray(model.input_direction()).reshape(-1)
+        direction = np.asarray(model.soc_direction()).reshape(-1)
+        samples_per_hour = 3600.0 / model.dt
+        drift_variance = soc_drift_per_hour**2 / samples_per_hour
+
+        index = getattr(model, "temperature_index", None)
+        thermal = np.zeros((model.n_states, model.n_states))
+        if index is not None:
+            b = b.copy()
+            b[index] = 0.0
+            direction = direction.copy()
+            direction[index] = 0.0
+            thermal[index, index] = temperature_std**2
+
+        return (
+            current_std**2 * np.outer(b, b)
+            + drift_variance * np.outer(direction, direction)
+            + thermal
+        )
+
     def _soc_gradient(self) -> np.ndarray:
         jac = getattr(self.model, "soc_jacobian", None)
         if jac is not None:

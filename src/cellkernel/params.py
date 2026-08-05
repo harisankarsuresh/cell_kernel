@@ -132,11 +132,22 @@ class ElectrodeParameters:
         )
 
 
+#: Temperature range over which Arrhenius corrections are evaluated, kelvin. No
+#: cell operates outside it and nothing in this package is calibrated there, but
+#: an unscented filter carrying temperature as a state *will* place sigma points
+#: outside it during a transient, and 1/T then overflows the exponential and
+#: poisons the covariance with infinities. Clamping keeps a wild sigma point
+#: merely wrong instead of fatal; the filter recovers on the next update.
+_TEMPERATURE_FLOOR = 173.15
+_TEMPERATURE_CEILING = 373.15
+
+
 def _arrhenius(activation_energy: float, temperature: float, reference: float) -> float:
     """Ratio of a rate at ``temperature`` to its value at ``reference``."""
     if activation_energy == 0.0:
         return 1.0
-    return float(np.exp(activation_energy / GAS_CONSTANT * (1.0 / reference - 1.0 / temperature)))
+    bounded = min(max(float(temperature), _TEMPERATURE_FLOOR), _TEMPERATURE_CEILING)
+    return float(np.exp(activation_energy / GAS_CONSTANT * (1.0 / reference - 1.0 / bounded)))
 
 
 @dataclass

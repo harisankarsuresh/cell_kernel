@@ -5,6 +5,47 @@ All notable changes to this project are documented here. The format follows
 to follow [semantic versioning](https://semver.org/spec/v2.0.0.html) from 1.0
 onwards. Before then, minor versions may break the API.
 
+## Unreleased
+
+### Fixed
+
+- **The filter prior no longer assumes every state carries the same units.** The
+  isotropic floor in `suggest_initial_covariance` is scaled from the largest
+  entry of the state-of-charge direction — a concentration of order 1e5 mol m⁻³
+  — which is a sensible few hundred mol m⁻³ for a diffusion state and several
+  hundred *kelvin* for a temperature one. The filter put the cell at 430 K on its
+  first update, at −14 K on its fifth, and never recovered. Temperature now gets
+  a prior of its own.
+- **Process noise no longer ties temperature to the current sensor.** The input
+  column of a thermal model has a nonzero temperature entry because current
+  generates heat, so the rank-one current term placed temperature in rigid
+  correlation with the diffusion states. Temperature uncertainty comes from the
+  ambient and from a heat-transfer coefficient nobody has measured accurately.
+- **Arrhenius factors are clamped to a physical temperature range.** An unscented
+  filter carrying temperature as a state places sigma points outside it during a
+  transient, and `1/T` then overflows the exponential and puts infinities in the
+  covariance.
+- `ThermalSPM` gained the `soc_jacobian` the other models have. Without it the
+  estimators fell back to a zero gradient and reported a state-of-charge
+  uncertainty of exactly zero, which is worse than reporting none.
+- `input_direction` accepts an operating point, and documents why it is a
+  one-sided difference: dissipation is even in current, so a central difference
+  about zero cancels resistive heating exactly.
+
+### Changed
+
+- `suggest_process_noise` and `suggest_initial_covariance` moved from `EKF` to the
+  base `Estimator`. They depend only on the model, and reaching them from one
+  filter only was an accident of which was written first.
+
+### Added
+
+- **`cellkernel.protocols`** — charging protocols that invert the plating
+  criterion rather than guessing a safe rate.
+- Cross-model integration tests: every estimator against every model, plus the
+  interface contract each model must satisfy.
+- Test coverage for the CLI (was 0%) and cycler-file loading (was 18%).
+
 ## 0.2.0
 
 ### Added
