@@ -162,7 +162,34 @@ V = U_p(x_p) + \eta_p - U_n(x_n) - \eta_n - I R_c
 
 The structural point: **the state dynamics are exactly linear.** Diffusion is linear in flux and flux is linear in current, so all nonlinearity lives in the voltage measurement. An extended Kalman filter on this model has *no linearisation error in its prediction step at all* — the usual complaint about EKFs does not apply, and the covariance propagation stays well behaved indefinitely.
 
-### 4. Estimators
+### 4. Temperature, when it cannot be ignored
+
+`ThermalSPM` adds cell temperature as a state: Bernardi heat generation, a lumped thermal node integrated exactly rather than by forward Euler, and Arrhenius feedback into both the kinetics and solid diffusion.
+
+Whether that is worth its cost is a real question, so here is the measurement. Same 2C discharge, once self-heating and once held isothermal:
+
+| ambient | temperature rise | peak voltage difference |
+|---|---|---|
+| −15 °C | 27.1 K | **736 mV** |
+| 0 °C | 23.4 K | 288 mV |
+| 25 °C | 18.0 K | 101 mV |
+| 40 °C | 15.2 K | 60 mV |
+
+Diffusivity moves roughly fifty-fold from −20 °C to 60 °C. An isothermal model freezes that, and the error it makes is largest exactly where a physics-based model is most wanted — in the cold, where surface depletion sets the plating limit.
+
+The awkward part is that diffusivity enters through the matrix exponential, which a microcontroller cannot evaluate. So the matrices are precomputed across a temperature grid and blended online. **The blend is on the Arrhenius factor, not on temperature**, and that detail is worth more than it sounds: at a sample period short against the diffusion time constant the discrete matrix is close to $A \approx I + A_c(D)\Delta t$ with $A_c$ proportional to $D$, so the matrices are nearly affine in diffusivity, and diffusivity is exponential in $1/T$. Interpolating linearly in temperature fits a straight line through an exponential and is worst at the cold end. On a nine-point grid that costs **197 mV at −18 °C**; blending on the factor instead costs **1.8 mV**, for one extra exponential per electrode per step.
+
+| grid points | −18 °C | −3 °C | 22 °C | 47 °C |
+|---|---|---|---|---|
+| 5 | 5.55 mV | 0.13 mV | 0.21 mV | 0.28 mV |
+| 9 | 1.79 mV | 0.07 mV | 0.08 mV | 0.06 mV |
+| 17 | 0.58 mV | 0.02 mV | 0.03 mV | 0.02 mV |
+
+Activation energies are deliberately **not** shipped with the parameter sets — they are seldom reported alongside the transport properties they modify, and published values scatter widely enough that a default would be a guess wearing the clothes of a measurement. Supply them with `CellParameters.with_activation_energies`.
+
+Reproduce with `python examples/05_thermal_coupling.py`.
+
+### 5. Estimators
 
 `EKF` (Joseph-form covariance, optional Gauss-Newton iteration), `UKF` (sigma points on the measurement only — for an affine map the unscented transform is exact, so propagating them through the linear process would compute the same numbers more slowly and *less* accurately), and `DualEKF` (adds capacity retention and resistance growth).
 
@@ -185,7 +212,7 @@ The iterated EKF beats the unscented filter here, for a fraction of the cost.
 
 The middle panel shows what a single linearised correction actually does when seeded 15% wrong: it drives the estimate *above 100%* state of charge and then takes the whole cycle to crawl back, ending worse than open-loop coulomb counting. That is the failure mode the table above quantifies, and it is the reason `iterations` defaults to more than one. Reproduce with `python examples/02_estimate_state_of_charge.py`.
 
-### 5. Code generation, and evidence
+### 6. Code generation, and evidence
 
 `generate()` emits `cellkernel_estimator.{h,c}` — no dynamic allocation, no global mutable state, fixed-size arrays, bounded execution time, no iteration, worst case equal to typical case. It compiles under `-std=c99 -Wall -Wextra -Wpedantic -Werror` with no warnings. Alongside it come a host harness, a `Makefile`, a `CMakeLists.txt`, and a `BUDGET.txt`:
 
@@ -212,7 +239,8 @@ A 3 mV gap between generated C and a reference is unremarkable if it is table re
 
 Stated plainly, because a tool that hides these is worse than one that does not exist.
 
-- **Isothermal.** Temperature enters kinetics, transport and the reduced-order matrices, but the model is built at one temperature. Use `SPM.at_temperature()` and gain-schedule. Full thermal coupling is on the roadmap; `SpectralDiffusion` is the natural vehicle, since its diagonal state matrix means an Arrhenius change in diffusivity costs one exponential per mode rather than a matrix exponential.
+- **The thermal model is a single node, and code generation does not yet cover it.** One lumped node is what can actually be identified from a battery-management unit's own measurements, which are surface temperature at best; radial gradients inside a cylindrical cell reach tens of kelvin at high rate and are not represented. Separately, `generate()` currently emits the isothermal `SPM` only — the temperature schedule works in Python but the C path has not been extended to carry it, so a generated estimator is still pinned to one operating point.
+- **Temperature is weakly observable from voltage alone.** The filter infers it through its effect on polarisation, which is indirect and slow. Measured state-of-charge error on a cold 1.5C discharge settles near 3.5% with a temperature state against 0.15% for the isothermal model on a comparable run. If a thermistor is available, use it; a measured cell temperature is worth more than any amount of filter tuning here.
 - **No electrolyte dynamics.** This is a single particle model with a lumped series resistance, not SPMe. Electrolyte concentration polarisation is not represented, which matters above roughly 3C and in thick electrodes.
 - **The posterior covariance is optimistic at open circuit.** One voltage measurement cannot separate the two electrodes; there is a direction in state space that voltage never observes, and only current integration couples them. The reported standard deviation comes out several times smaller than the true error during long rests. This is asserted as a test rather than hidden, so it will be noticed when fixed.
 - **Lookup-table error is not uniform.** Worst-case interpolation error for the built-in graphite fit is 4.95 mV at 257 points, but it is confined entirely below 4% stoichiometry — the steep exponential rise, 3% of the table domain and below the operating window. Median error over the domain is 0.002 mV. Raise `table_points` if the extremes matter; `BUDGET.txt` reports the figure so the trade is explicit.
@@ -222,7 +250,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 236 tests
+pytest                      # 310 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 

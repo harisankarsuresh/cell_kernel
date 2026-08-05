@@ -27,6 +27,7 @@ from .base import (
 from .finite_volume import FiniteVolumeDiffusion
 from .pade import PadeDiffusion, pade_coefficients
 from .polynomial import PolynomialDiffusion
+from .schedule import ScheduledStateSpace, schedule_over_temperature
 from .spectral import SpectralDiffusion, zero_flux_eigenvalues
 
 __all__ = [
@@ -35,12 +36,14 @@ __all__ = [
     "FiniteVolumeDiffusion",
     "PadeDiffusion",
     "PolynomialDiffusion",
+    "ScheduledStateSpace",
     "SpectralDiffusion",
     "exact_surface_transfer_function",
     "low_frequency_series",
     "make_rom",
     "normalised_series_coefficients",
     "pade_coefficients",
+    "schedule_over_temperature",
     "zero_flux_eigenvalues",
 ]
 

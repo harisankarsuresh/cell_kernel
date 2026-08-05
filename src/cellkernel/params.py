@@ -287,6 +287,59 @@ class CellParameters:
             return self.positive
         raise ValueError(f"unknown electrode {which!r}")
 
+    def with_activation_energies(
+        self,
+        diffusion_negative: float = 0.0,
+        diffusion_positive: float = 0.0,
+        reaction_negative: float = 0.0,
+        reaction_positive: float = 0.0,
+    ) -> CellParameters:
+        """Return a copy with Arrhenius activation energies set, in J mol-1.
+
+        The built-in parameter sets leave these at zero on purpose: they are not
+        reported alongside the transport properties they modify, and published
+        values scatter widely enough that a shipped default would be a guess
+        wearing the clothes of a measurement.
+
+        They are still needed for anything thermal to mean much.
+        :class:`~cellkernel.models.ThermalSPM` will run without them, but only the
+        ``2RT/F`` kinetic prefactor then responds to temperature, which is the
+        smallest of the three channels; solid diffusivity, the one that actually
+        governs surface concentration and hence fast-charge limits, stays frozen.
+        This helper is the intended way to supply them.
+
+        Representative ranges from the literature, for orientation rather than
+        for citing: graphite solid diffusion 30-42 kJ mol-1, layered-oxide solid
+        diffusion 25-80 kJ mol-1, reaction rates 17-40 kJ mol-1. Fit your own
+        against rate tests at two or more temperatures if the answer matters.
+
+        >>> cell = chen2020_nmc811_graphite().with_activation_energies(
+        ...     diffusion_negative=35_000.0, diffusion_positive=30_000.0,
+        ...     reaction_negative=35_000.0, reaction_positive=17_800.0,
+        ... )
+        """
+        for name, value in (
+            ("diffusion_negative", diffusion_negative),
+            ("diffusion_positive", diffusion_positive),
+            ("reaction_negative", reaction_negative),
+            ("reaction_positive", reaction_positive),
+        ):
+            if value < 0.0:
+                raise ValueError(f"{name} must be non-negative, got {value}")
+        return replace(
+            self,
+            negative=replace(
+                self.negative,
+                diffusion_activation_energy=float(diffusion_negative),
+                reaction_activation_energy=float(reaction_negative),
+            ),
+            positive=replace(
+                self.positive,
+                diffusion_activation_energy=float(diffusion_positive),
+                reaction_activation_energy=float(reaction_positive),
+            ),
+        )
+
     def with_capacity_fade(self, retention: float) -> CellParameters:
         """Return a copy with the stoichiometry windows shrunk to ``retention``.
 
