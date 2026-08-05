@@ -56,6 +56,13 @@ onwards. Before then, minor versions may break the API.
   oxide. A margin below that figure is measuring the table, not the cell, and
   the figure was previously visible only in a build log.
 - `cellkernel charge` and `cellkernel age` subcommands.
+- **Validation against PyBaMM**, on PyBaMM's own Chen2020 parameter set and
+  started from identical stoichiometries so the comparison measures the physics
+  rather than each package's state-of-charge bookkeeping. Two independent
+  implementations of the single particle model agree to 0.2 mV RMSE at 0.5C, and
+  resolving the electrolyte roughly halves the distance to a full
+  Doyle–Fuller–Newman solution at every rate below 3C. An optional dependency,
+  running as its own CI job.
 - Cross-model integration tests: every estimator against every model, plus the
   interface contract each model must satisfy.
 - Test coverage for the CLI (was 0%) and cycler-file loading (was 18%).

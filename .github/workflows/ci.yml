@@ -53,6 +53,23 @@ jobs:
       - run: ruff check src tests examples
       - run: ruff format --check src tests examples
 
+  pybamm:
+    name: Validated against PyBaMM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" pybamm
+      # Its own job because the Doyle-Fuller-Newman comparisons are slow, and
+      # because PyBaMM is an optional dependency: the rest of the suite must
+      # keep passing without it.
+      - name: Compare against an independent implementation
+        run: python -m pytest tests/test_pybamm_validation.py -v
+
   coverage:
     name: Coverage does not regress
     runs-on: ubuntu-latest

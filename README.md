@@ -170,7 +170,25 @@ V = U_p(x_p) + \eta_p - U_n(x_n) - \eta_n - I R_c
 
 The structural point: **the state dynamics are exactly linear.** Diffusion is linear in flux and flux is linear in current, so all nonlinearity lives in the voltage measurement. An extended Kalman filter on this model has *no linearisation error in its prediction step at all* — the usual complaint about EKFs does not apply, and the covariance propagation stays well behaved indefinitely.
 
-### 4. When the electrolyte stops being a resistor
+### 4. Checked against somebody else's code
+
+Closed-form tests catch a great deal, but they cannot catch a misunderstanding shared between a model and the test written by the same person. So the models are also compared against [PyBaMM](https://github.com/pybamm-team/PyBaMM), on PyBaMM's own Chen2020 parameter set, started from *identical* stoichiometries so the comparison measures the physics rather than each package's state-of-charge bookkeeping.
+
+| discharge | our SPM vs PyBaMM SPM | our SPM vs DFN | our SPMe vs DFN |
+|---|---|---|---|
+| 0.5C | **0.2 mV** | 26.0 mV | **11.7 mV** |
+| 1.0C | 8.1 mV | 45.5 mV | **16.6 mV** |
+| 2.0C | 23.0 mV | 111.5 mV | **52.3 mV** |
+
+Two independent implementations of the same model agree to 0.2 mV RMSE at 0.5C, which is about the strongest form this check can take. And resolving the electrolyte roughly halves the distance to a full Doyle–Fuller–Newman solution at every rate — that is the claim `SPMe` exists to make, verified against something outside this repository.
+
+The residual against PyBaMM's own SPM grows to 23 mV at 2C, and it is worth being precise about why, because the two candidate explanations have opposite remedies. It is **not** the reduced-order approximation: five families spanning 6 to 48 states give the same answer to a fraction of a millivolt. It is a difference between the models, so adding states will not fix it. That is asserted as a test rather than left as a hope.
+
+`from_pybamm` does the import, and re-solves the stoichiometry window rather than taking the published limits verbatim — those leave a percent-level charge imbalance that would otherwise be absorbed by whatever transport parameter is fitted next.
+
+PyBaMM is an optional dependency; the comparison runs as its own CI job. Reproduce with `pip install pybamm && python examples/09_validate_against_pybamm.py`.
+
+### 5. When the electrolyte stops being a resistor
 
 `SPMe` resolves salt transport across the sandwich — negative coating, separator, positive coating — instead of lumping it into a fitted series resistance. It adds the electrolyte ohmic drop, computed from geometry and conductivity rather than fitted, and the concentration overpotential that builds as salt is driven from one coating to the other.
 
@@ -193,7 +211,7 @@ Transport coefficients are held at their bulk values, which keeps the system lin
 
 Reproduce with `python examples/06_electrolyte.py`.
 
-### 5. Temperature, when it cannot be ignored
+### 6. Temperature, when it cannot be ignored
 
 `ThermalSPM` adds cell temperature as a state: Bernardi heat generation, a lumped thermal node integrated exactly rather than by forward Euler, and Arrhenius feedback into both the kinetics and solid diffusion.
 
@@ -224,7 +242,7 @@ Reproduce with `python examples/05_thermal_coupling.py`.
 
 The schedule costs less than it sounds. Against the isothermal generator, on a 6-state model with a 9-point grid in single precision: **1.4× the flash and 2.3× the RAM** — 3.6 kB and 384 B — because the potential tables dominate flash and are shared across the grid. Blended coefficients are cached and rebuilt only when the measured temperature changes, which for a thermistor read far more slowly than the control loop means the cache usually hits. Generated C agrees with its NumPy mirror to 8.9e-16 V in double precision, including while temperature ramps across grid boundaries mid-run.
 
-### 6. Predicting ageing, not just tracking it
+### 7. Predicting ageing, not just tracking it
 
 `cellkernel.degradation` models the two mechanisms a graphite cell spends most of its life limited by. Interphase growth consumes cyclable lithium continuously and builds the film that throttles its own growth, so loss bends from linear to a square root within the first week. Lithium plating deposits metal instead of intercalating whenever the negative electrode potential falls below that of lithium metal.
 
@@ -263,7 +281,7 @@ cellkernel charge --temperature 263.15 313.15   # safe charge rate, by state of 
 cellkernel age --cycles 300                     # capacity fade, by temperature
 ```
 
-### 7. Charging as fast as the physics allows
+### 8. Charging as fast as the physics allows
 
 `cellkernel.protocols` inverts the plating criterion: given a state and a temperature, `plating_limited_current` returns the largest charging current that keeps the electrode a stated margin above the onset. Feeding that back as the setpoint gives a charge that is aggressive where it can be and cautious where it must be.
 
@@ -306,7 +324,7 @@ That closes the loop the package exists to close. The quantity that limits charg
 
 Reproduce with `python examples/08_fast_charge.py`.
 
-### 8. Estimators
+### 9. Estimators
 
 `EKF` (Joseph-form covariance, optional Gauss-Newton iteration), `UKF` (sigma points on the measurement only — for an affine map the unscented transform is exact, so propagating them through the linear process would compute the same numbers more slowly and *less* accurately), and `DualEKF` (adds capacity retention and resistance growth).
 
@@ -329,7 +347,7 @@ The iterated EKF beats the unscented filter here, for a fraction of the cost.
 
 The middle panel shows what a single linearised correction actually does when seeded 15% wrong: it drives the estimate *above 100%* state of charge and then takes the whole cycle to crawl back, ending worse than open-loop coulomb counting. That is the failure mode the table above quantifies, and it is the reason `iterations` defaults to more than one. Reproduce with `python examples/02_estimate_state_of_charge.py`.
 
-### 9. Code generation, and evidence
+### 10. Code generation, and evidence
 
 `generate()` emits `cellkernel_estimator.{h,c}` — no dynamic allocation, no global mutable state, fixed-size arrays, bounded execution time, no iteration, worst case equal to typical case. It compiles under `-std=c99 -Wall -Wextra -Wpedantic -Werror` with no warnings. Alongside it come a host harness, a `Makefile`, a `CMakeLists.txt`, and a `BUDGET.txt`:
 
@@ -369,7 +387,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 573 tests
+pytest                      # 584 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 
