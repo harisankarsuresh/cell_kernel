@@ -47,7 +47,14 @@ onwards. Before then, minor versions may break the API.
   that sets the current. The potential is free — `ck_voltage` already formed it
   and threw it away — and the limiter is bisection over a fixed 24 steps, so
   execution time is constant. The generated bisection is bit-identical to its
-  Python mirror.
+  Python mirror. The scheduled estimator exposes the same pair taking measured
+  temperature, which is the version that matters — plating is a cold-weather
+  failure and the isothermal generator answers only for one point.
+- **`CK_OCP_ERROR_NEG` and `CK_OCP_ERROR_POS`** in the generated header. The
+  plating potential inherits the negative electrode's table error, and graphite
+  tabulates badly: 4.95 mV at the default 257 points against 0.13 mV for the
+  oxide. A margin below that figure is measuring the table, not the cell, and
+  the figure was previously visible only in a build log.
 - `cellkernel charge` and `cellkernel age` subcommands.
 - Cross-model integration tests: every estimator against every model, plus the
   interface contract each model must satisfy.

@@ -298,6 +298,10 @@ ck_real_t setpt = ck_max_charge_current(&est, 0.01f, CK_LIMIT_CEILING);
 
 The potential costs nothing extra — `ck_voltage` already forms it as a sub-expression and discards it. The limiter is bisection over a fixed 24 steps, so execution time is constant and known: no convergence test, no loop that might not terminate. The generated bisection is **bit-identical** to its Python mirror, which is what a fixed iteration count with no tolerance test should give, and the plating potential agrees to 1e-12 V in double precision.
 
+The scheduled estimator exposes the same pair taking measured temperature, and that is the version that earns its keep — plating is a cold-weather failure, and the isothermal generator can only answer for the single point it was built at. At 70% state of charge the safe rate falls from 1.32C at 25 °C to 0.26C at −10 °C, a factor of five, and the embedded answer reproduces the full Python model's table to two decimal places.
+
+One caveat the header now states rather than burying in a build log: `ck_plating_potential` reads the negative electrode's lookup table, so it inherits that table's error. Graphite tabulates badly — its stage transitions cost **4.95 mV at the default 257 points**, against 0.13 mV for the layered oxide opposite it. A 10 mV plating margin is therefore only twice the table error. `CK_OCP_ERROR_NEG` and `CK_OCP_ERROR_POS` are emitted so a margin can be sized against them; `--table-points 513` brings the negative electrode to 1.3 mV.
+
 That closes the loop the package exists to close. The quantity that limits charging is not measurable at the terminals, so a controller either models it or guesses — and this is that model, compiled, on the microcontroller that sets the current.
 
 Reproduce with `python examples/08_fast_charge.py`.
@@ -365,7 +369,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 568 tests
+pytest                      # 573 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 

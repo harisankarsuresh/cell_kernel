@@ -113,6 +113,9 @@ class ThermalEstimatorSpec:
     initial_covariance: np.ndarray
     sto_negative: tuple[float, float]
     sto_positive: tuple[float, float]
+    #: Largest current the potential tables were sized to cover, in amperes.
+    #: ``ck_max_charge_current`` will not search above it.
+    current_ceiling: float = 15.0
     provenance: str = ""
 
     @property
@@ -360,6 +363,7 @@ def spec_from_thermal_spm(
         initial_covariance=p0,
         sto_negative=(float(neg.stoich_at_0_soc), float(neg.stoich_at_100_soc)),
         sto_positive=(float(pos.stoich_at_0_soc), float(pos.stoich_at_100_soc)),
+        current_ceiling=float(max_c_rate * model.parameters.nominal_capacity),
         provenance=(
             f"cell={cell.name!r} thermal schedule "
             f"{grid.size} points {grid[0]:.1f}-{grid[-1]:.1f}K dt={model.dt}s"
@@ -454,6 +458,39 @@ class ThermalReferenceEstimator:
 
     def soc(self) -> float:
         return float(self.spec.soc_scale * self._bulk_negative() + self.spec.soc_offset)
+
+    def plating_potential(self, current: float, temperature: float) -> float:
+        """Negative electrode potential against lithium metal, in volts."""
+        electrode = self.spec.negative
+        c_surf = self._surface("negative", current, temperature)
+        return float(
+            electrode.ocp_table.interpolate(c_surf / electrode.max_concentration)
+            + self._overpotential(electrode, c_surf, current, temperature)
+        )
+
+    def max_charge_current(
+        self, temperature: float, margin: float, ceiling: float, iterations: int = 24
+    ) -> float:
+        """Mirror of ``ck_max_charge_current``, bisection and all.
+
+        The iteration count matches the generated code rather than converging to
+        a tolerance. Reproducing what the firmware does step for step is the
+        point; a tighter answer here would be a better number and a worse mirror.
+        """
+        if ceiling <= 0.0:
+            return 0.0
+        if self.plating_potential(-ceiling, temperature) >= margin:
+            return ceiling
+        if self.plating_potential(0.0, temperature) < margin:
+            return 0.0
+        low, high = 0.0, ceiling
+        for _ in range(iterations):
+            middle = 0.5 * (low + high)
+            if self.plating_potential(-middle, temperature) >= margin:
+                low = middle
+            else:
+                high = middle
+        return low
 
     def voltage_jacobian(self, current: float, temperature: float) -> np.ndarray:
         spec = self.spec

@@ -87,6 +87,22 @@ typedef {precision} ck_real_t;
 #define CK_V_MAX          ({_fmt(hi, precision)})
 
 /*
+ * Bisection steps in ck_max_charge_current, fixed so the routine costs the same
+ * on every call, and the largest current the potential tables were sized for.
+ */
+#define CK_LIMIT_ITERATIONS 24
+#define CK_LIMIT_CEILING  ({_fmt(spec.current_ceiling, precision)})
+
+/*
+ * Worst-case error of each potential table against the analytic fit, in volts.
+ * ck_plating_potential inherits the negative electrode's figure directly, so a
+ * plating margin below it is measuring the table rather than the cell. Graphite
+ * tabulates far worse than a layered oxide because of its stage transitions.
+ */
+#define CK_OCP_ERROR_NEG  ({_fmt(spec.negative.ocp_table.max_abs_error, precision)})
+#define CK_OCP_ERROR_POS  ({_fmt(spec.positive.ocp_table.max_abs_error, precision)})
+
+/*
  * All mutable state. The blended matrices are cached here rather than
  * recomputed per call: a predict-and-correct cycle touches them four times, and
  * blending once per step costs one pass over the tables instead of four.
@@ -146,6 +162,30 @@ ck_real_t ck_surface_stoichiometry_positive(ck_estimator_t *est, ck_real_t curre
  * is detected. Temperature independent, since the conserved functional is. */
 ck_real_t ck_bulk_stoichiometry_negative(const ck_estimator_t *est);
 ck_real_t ck_bulk_stoichiometry_positive(const ck_estimator_t *est);
+
+/*
+ * Negative electrode potential against lithium metal, in volts. Below zero the
+ * cell is depositing metal rather than intercalating it.
+ *
+ * This is the version of the plating check worth having, because plating is a
+ * cold-weather failure and this estimator is the one that knows the temperature.
+ * The isothermal generator can only answer for the single point it was built at.
+ */
+ck_real_t ck_plating_potential(ck_estimator_t *est, ck_real_t current,
+                               ck_real_t temperature);
+
+/*
+ * Largest charging current, as a positive magnitude in amperes, that keeps the
+ * negative electrode at least `margin` volts above the plating onset at the
+ * measured temperature. Zero means no charging current is safe, which is a real
+ * answer at high state of charge in the cold.
+ *
+ * Bisection over a fixed CK_LIMIT_ITERATIONS steps, so execution time is
+ * constant. The blend is refreshed once for the whole search rather than on
+ * every evaluation, since temperature does not move inside it.
+ */
+ck_real_t ck_max_charge_current(ck_estimator_t *est, ck_real_t temperature,
+                                ck_real_t margin, ck_real_t ceiling);
 
 #ifdef __cplusplus
 }}
@@ -493,6 +533,50 @@ ck_real_t ck_soc(const ck_estimator_t *est)
     return CK_SOC_SCALE * acc + CK_SOC_OFFSET;
 }}
 
+ck_real_t ck_plating_potential(ck_estimator_t *est, ck_real_t current,
+                               ck_real_t temperature)
+{{
+    ck_real_t cs_n, u_n, eta_n;
+
+    ck_ensure(est, temperature);
+    cs_n = ck_surface_neg(est, current);
+    u_n = ck_lookup(ck_ocp_neg, CK_OCP_N_NEG, cs_n / CK_CMAX_NEG,
+                    CK_OCP_MIN_NEG, CK_OCP_INVSTEP_NEG);
+    eta_n = ck_overpotential(est, cs_n, CK_CMAX_NEG, est->i0_prefactor_neg,
+                             CK_J_NEG * current);
+    return u_n + eta_n;
+}}
+
+ck_real_t ck_max_charge_current(ck_estimator_t *est, ck_real_t temperature,
+                                ck_real_t margin, ck_real_t ceiling)
+{{
+    ck_real_t low = (ck_real_t) 0;
+    ck_real_t high = ceiling;
+    int i;
+
+    if (ceiling <= (ck_real_t) 0) {{
+        return (ck_real_t) 0;
+    }}
+    /* One blend for the whole search: temperature does not move inside it, and
+     * ck_ensure would otherwise be paid on all twenty-six evaluations. */
+    ck_ensure(est, temperature);
+    if (ck_plating_potential(est, -ceiling, temperature) >= margin) {{
+        return ceiling;
+    }}
+    if (ck_plating_potential(est, (ck_real_t) 0, temperature) < margin) {{
+        return (ck_real_t) 0;
+    }}
+    for (i = 0; i < CK_LIMIT_ITERATIONS; ++i) {{
+        const ck_real_t middle = (ck_real_t) 0.5 * (low + high);
+        if (ck_plating_potential(est, -middle, temperature) >= margin) {{
+            low = middle;
+        }} else {{
+            high = middle;
+        }}
+    }}
+    return low;
+}}
+
 ck_real_t ck_surface_stoichiometry_negative(ck_estimator_t *est, ck_real_t current,
                                             ck_real_t temperature)
 {{
@@ -679,7 +763,7 @@ int main(int argc, char **argv)
     filtering = (argv[1][0] == 'f');
     soc0 = atof(argv[2]);
 
-    printf("soc,voltage,sto_neg,sto_pos\\n");
+    printf("soc,voltage,sto_neg,sto_pos,plating,charge_limit\\n");
     while (scanf("%lf,%lf,%lf", &current, &temperature, &voltage) == 3) {
         const ck_real_t i_k = (ck_real_t) current;
         const ck_real_t t_k = (ck_real_t) temperature;
@@ -689,11 +773,14 @@ int main(int argc, char **argv)
             first = 0;
         }
 
-        printf("%.17g,%.17g,%.17g,%.17g\\n",
+        printf("%.17g,%.17g,%.17g,%.17g,%.17g,%.17g\\n",
                (double) ck_soc(&est),
                (double) ck_voltage(&est, i_k, t_k),
                (double) ck_surface_stoichiometry_negative(&est, i_k, t_k),
-               (double) ck_surface_stoichiometry_positive(&est, i_k, t_k));
+               (double) ck_surface_stoichiometry_positive(&est, i_k, t_k),
+               (double) ck_plating_potential(&est, i_k, t_k),
+               (double) ck_max_charge_current(&est, t_k, (ck_real_t) 0.01,
+                                              (ck_real_t) CK_LIMIT_CEILING));
 
         ck_predict(&est, i_k, t_k);
         if (filtering) {

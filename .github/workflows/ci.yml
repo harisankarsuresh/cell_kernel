@@ -138,6 +138,46 @@ jobs:
                 -Wconversion -Wshadow -Wstrict-prototypes -Wmissing-prototypes \
                 -c cellkernel_scheduled.c -o /dev/null
 
+      # The charge limiter is the one routine a controller acts on directly, so
+      # it gets checked for the properties its callers rely on: bounded time
+      # (a fixed iteration count, no early exit) and a result that never exceeds
+      # the ceiling it was given.
+      - name: Charge limiter is bounded and respects its ceiling
+        run: |
+          cd build/ci
+          test "$(grep -c 'CK_LIMIT_ITERATIONS' cellkernel_estimator.h)" -ge 1
+          grep -q 'for (i = 0; i < CK_LIMIT_ITERATIONS' cellkernel_estimator.c
+          ! grep -A6 'for (i = 0; i < CK_LIMIT_ITERATIONS' cellkernel_estimator.c | grep -q 'break'
+          cat > limit_check.c <<'EOF'
+          #include "cellkernel_estimator.h"
+          #include <stdio.h>
+          int main(void) {
+              ck_estimator_t est;
+              ck_real_t soc;
+              for (soc = (ck_real_t) 0.05; soc < (ck_real_t) 1.0; soc += (ck_real_t) 0.05) {
+                  ck_real_t limit, phi;
+                  ck_init(&est, soc);
+                  limit = ck_max_charge_current(&est, (ck_real_t) 0.01, CK_LIMIT_CEILING);
+                  if (limit < 0 || limit > CK_LIMIT_CEILING) {
+                      printf("out of range at soc %f: %f\n", (double) soc, (double) limit);
+                      return 1;
+                  }
+                  if (limit > 0) {
+                      phi = ck_plating_potential(&est, -limit);
+                      if (phi < (ck_real_t) 0.01 - (ck_real_t) 1e-4) {
+                          printf("margin violated at soc %f: %f\n", (double) soc, (double) phi);
+                          return 1;
+                      }
+                  }
+              }
+              printf("ok\n");
+              return 0;
+          }
+          EOF
+          gcc -std=c99 -O2 -Wall -Wextra -Werror -o limit_check \
+              limit_check.c cellkernel_estimator.c -lm
+          ./limit_check
+
       - name: Undefined-behaviour sanitiser on the harness
         run: |
           cd build/ci

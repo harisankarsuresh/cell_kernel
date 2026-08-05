@@ -121,6 +121,19 @@ typedef {precision} ck_real_t;
 #define CK_LIMIT_CEILING  ({_fmt(spec.current_ceiling, precision)})
 
 /*
+ * Worst-case error of each open-circuit potential table against the analytic
+ * fit it replaces, in volts. Emitted rather than left in a build log because
+ * ck_plating_potential inherits the negative electrode's figure directly, and a
+ * plating margin smaller than it is measuring the table rather than the cell.
+ *
+ * Graphite is much harder to tabulate than a layered oxide -- its potential has
+ * several sharp stage transitions -- so the two are usually an order of
+ * magnitude apart. Raise --table-points if the margin needs to be tight.
+ */
+#define CK_OCP_ERROR_NEG  ({_fmt(spec.negative.ocp_table.max_abs_error, precision)})
+#define CK_OCP_ERROR_POS  ({_fmt(spec.positive.ocp_table.max_abs_error, precision)})
+
+/*
  * All mutable state. Allocate one per cell; the code touches no globals, so
  * instances are independent and every entry point is reentrant.
  */
