@@ -3,11 +3,18 @@
 Answers the three questions a firmware engineer asks before agreeing to
 integrate anything: how much flash, how much RAM, and how long does it take.
 
-All figures are derived by counting the emitted data structures and arithmetic
-operations, not measured. Flash and RAM counts are exact for the data; code size
-is excluded because it depends on the compiler and options, though it is small
-next to the tables. The cycle estimate is a model, and its assumptions are stated
-so it can be corrected for a specific core rather than trusted blindly.
+All figures here are derived by counting the emitted data structures and
+arithmetic operations, not measured. The data counts are exact. Code size is
+excluded, and the note that used to sit here claimed it was "small next to the
+tables" -- which was a guess, and wrong: cross-compiled for a Cortex-M4F at
+``-Os`` the code is 2124 bytes against 2512 bytes of tables, so a flash figure
+that omits it is short by 45%.
+
+Use :mod:`cellkernel.codegen.measure` for the real number. It cross-compiles the
+emitted source with the Arm toolchain and reads the section sizes out of the
+object file, which is the same accounting the firmware engineer will do. What
+remains here is useful for sizing a design before a toolchain is set up, and for
+seeing how the cost scales with state count, but it is a model and says so.
 """
 
 from __future__ import annotations
@@ -54,7 +61,7 @@ class ResourceBudget:
         lines = [
             f"precision            {self.precision} ({self.word_bytes} bytes/word)",
             f"states               {self.n_states}",
-            f"flash (tables)       {self.flash_bytes} B",
+            f"flash (tables only)  {self.flash_bytes} B  (+ ~2.1 kB code on M4F -Os; measure it)",
             f"RAM (per instance)   {self.ram_bytes} B",
             f"stack (predict)      {self.stack_bytes} B",
             f"arithmetic/step      {self.multiplies_per_step} mul, "

@@ -70,6 +70,30 @@ jobs:
       - name: Compare against an independent implementation
         run: python -m pytest tests/test_pybamm_validation.py -v
 
+  arm:
+    name: Measured on ARM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install the cross toolchain and emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi qemu-system-arm
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      # Footprint from the linker's own accounting, instruction counts from an
+      # emulated Cortex-M4. Both are measurements; the resource budget in the
+      # package is a model, and this is what keeps the two honest about each
+      # other.
+      - name: Cross-compile and count
+        run: python -m pytest tests/test_arm_measurement.py -v
+      - name: Report the figures
+        run: python -m cellkernel.cli measure build/ci_arm --precision float --order 3
+
   coverage:
     name: Coverage does not regress
     runs-on: ubuntu-latest

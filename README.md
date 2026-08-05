@@ -4,7 +4,7 @@
 
 `cellkernel` takes a physics-based cell model, wraps it in a Kalman filter, and emits a self-contained C99 estimator that runs on a battery-management microcontroller — then compiles that C, replays it against the Python original, and tells you exactly how far apart they are.
 
-On a Cortex-M-class target, a 6-state single particle model with an extended Kalman filter costs **168 bytes of RAM, 2.6 kB of flash, and about 16 µs per step at 120 MHz**. The generated C agrees with the Python reference to **9e-16 V in double precision** and **7 µV in single precision**.
+Cross-compiled for a Cortex-M4F at `-Os` and run on an emulated core, a 6-state single particle model with an extended Kalman filter costs **4.6 kB of flash, 168 bytes of RAM per cell, no static RAM at all, and 5,086 instructions per step**. Those are measured, not modelled — see below, because the modelled figures were wrong. The generated C agrees with the Python reference to **9e-16 V in double precision** and **7 µV in single precision**.
 
 The models are checked against [PyBaMM](https://github.com/pybamm-team/PyBaMM) rather than only against themselves — two independent implementations of the single particle model agree to **0.2 mV** at 0.5C. And the generated estimator answers the question a charger actually needs: `ck_max_charge_current` returns the fastest rate that will not plate lithium, in bounded time, on the microcontroller.
 
@@ -381,6 +381,27 @@ estimated time       48 MHz: 41.2 us, 80 MHz: 24.7 us, 120 MHz: 16.5 us, 180 MHz
 
 A 3 mV gap between generated C and a reference is unremarkable if it is table resolution and alarming if it is arithmetic. Separating the legs is what makes the difference visible. During development this immediately localised a 138 mV discrepancy to a lookup table whose domain was too narrow to cover surface excursion under load.
 
+### Measured, not modelled
+
+That `BUDGET.txt` is arithmetic on the emitted data structures. `cellkernel measure` cross-compiles for a real Cortex-M and reads the linker's own accounting:
+
+```
+        target   opt     flash      code    tables
+  --------------------------------------------------
+    cortex-m4f   -Os     4636 B     2124 B     2512 B
+    cortex-m4f   -O2     5492 B     2980 B     2512 B
+ cortex-m0plus   -Os     4820 B     2308 B     2512 B
+
+  Instructions retired per filter step, on an emulated Cortex-M4:
+     -Os  5,086 instructions   (modelled 1,979 cycles)
+```
+
+**Two of those columns say the model was wrong.** The table count is good — within 3% of what the linker reports, which it should be, since it is exact arithmetic. But the budget reported *flash* as tables only, justified by a note claiming code was small beside them. Code is 2124 bytes against 2512 of tables, so the headline flash figure was short by 45%. And the modelled cycle count is optimistic by a factor of two and a half.
+
+The instruction count is itself measured rather than assumed twice over. Fixed startup cost is removed by differencing two step counts. The tick-to-instruction conversion is calibrated in the same run, by timing a block of exactly *n* assembler `nop`s at two values of *n* so the loop overhead cancels — that comes out at exactly 40 instructions per tick, agreeing with the board's documented 25 MHz, but agreeing with a datasheet is a check rather than a substitute. The first attempt at that calibration wrapped the nops in a C loop and came out three times low.
+
+Instructions are still not cycles: QEMU models no pipeline, no flash wait states and no memory system, so real silicon takes at least this many and generally more. `168 B` of RAM per cell is exact, and `.bss` and `.data` are both zero — the estimator has no globals, which is what makes one instance per cell in a pack safe.
+
 ## Known limitations
 
 Stated plainly, because a tool that hides these is worse than one that does not exist.
@@ -393,13 +414,14 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 - **The posterior covariance is optimistic at open circuit.** One voltage measurement cannot separate the two electrodes; there is a direction in state space that voltage never observes, and only current integration couples them. The reported standard deviation comes out several times smaller than the true error during long rests. This is asserted as a test rather than hidden, so it will be noticed when fixed.
 - **Lookup-table error is not uniform.** Worst-case interpolation error for the built-in graphite fit is 4.95 mV at 257 points, but it is confined entirely below 4% stoichiometry — the steep exponential rise, 3% of the table domain and below the operating window. Median error over the domain is 0.002 mV. Raise `table_points` if the extremes matter; `BUDGET.txt` reports the figure so the trade is explicit.
 - **Capacity retention is modelled as loss of active material** (flux scaling), not loss of lithium inventory. That makes it partially observable from pulse transients, which is correct for that mechanism and wrong for the other. Distinguishing them needs a second parameter.
-- **Cycle counts are modelled, not measured.** The structural claims — quadratic in state count, dominated by covariance propagation, no data-dependent loop bounds — are reliable. The absolute number is a planning figure for a Cortex-M4F.
-- **PyBaMM agreement degrades with rate, for a reason not yet identified.** Two independent single particle models agree to 0.2 mV at 0.5C and 23 mV at 2C. The gap is *not* the reduced-order approximation — five families from 6 to 48 states give the same answer — so it is a difference between the models, and which one is closer to a real cell is not something this comparison can settle.
+- **The modelled cycle count is optimistic by about 2.5×, and instructions are not cycles.** `estimate_budget` reports 1,979 cycles per step; measured on an emulated Cortex-M4F the same code retires 5,086 instructions. And QEMU models no pipeline, no flash wait states and no memory system, so real silicon will take at least that many cycles and generally more. Use `cellkernel measure` and treat the modelled figure as a lower bound for early sizing only.
+- **No measurement on real silicon.** Everything above comes from a cross-compiler and an emulator. Neither models a flash accelerator, a cache, or contention with the rest of a firmware image.
+- **A ~2.5 mV residual against PyBaMM remains unexplained.** Down from 23 mV once three bridge defects were fixed, and it now responds to refinement rather than being a fixed offset — but it plateaus rather than vanishing, so some difference between the two implementations is still there.
 
 ## Testing
 
 ```bash
-pytest                      # 593 tests
+pytest                      # 602 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 
@@ -423,7 +445,7 @@ Closed-form tests cannot catch a misunderstanding shared between a model and the
 pytest tests/test_pybamm_validation.py
 ```
 
-Fourteen CI jobs run on every push: the suite on three operating systems and three Python versions, linting, coverage with a floor, every example end to end, the PyBaMM comparison, and the generated C compiled by both gcc and clang under conversion and shadowing warnings and then run under the undefined-behaviour and address sanitisers.
+Sixteen CI jobs run on every push: the suite on three operating systems and three Python versions, linting, coverage with a floor, every example end to end, the PyBaMM comparison, and the generated C compiled by both gcc and clang under conversion and shadowing warnings and then run under the undefined-behaviour and address sanitisers.
 
 ## Citing
 

@@ -54,7 +54,14 @@ cellkernel = "cellkernel.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-cellkernel = ["codegen/runtime/*.c", "codegen/runtime/*.h"]
+# The bare-metal benchmark and its linker script ship with the package so that
+# `cellkernel measure` works from an installed wheel, not just a source checkout.
+cellkernel = [
+    "codegen/runtime/*.c",
+    "codegen/runtime/*.h",
+    "codegen/_arm_bench.c",
+    "codegen/_arm_bench.ld",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

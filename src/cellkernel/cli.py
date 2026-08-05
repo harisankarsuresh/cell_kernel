@@ -315,6 +315,95 @@ def _cmd_age(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_measure(args: argparse.Namespace) -> int:
+    from .codegen import (
+        CORTEX_M0,
+        CORTEX_M4F,
+        estimate_budget,
+        find_arm_toolchain,
+        find_qemu,
+        generate,
+        generate_scheduled,
+        measure_arm_footprint,
+        measure_arm_instructions,
+        spec_from_spm,
+    )
+
+    if find_arm_toolchain() is None:
+        print(
+            "no arm-none-eabi-gcc found. Install the Arm GNU Toolchain to measure "
+            "the real footprint; `cellkernel generate` still reports the modelled "
+            "table size without it.",
+            file=sys.stderr,
+        )
+        return 1
+
+    output = Path(args.output)
+    if args.scheduled:
+        cell = _thermal_cell(args.chemistry)
+        from .models import ThermalSPM
+
+        model = ThermalSPM(cell, dt=args.dt, rom=args.rom, order=args.order)
+        generate_scheduled(model, output, precision=args.precision, table_points=args.table_points)
+        source = "cellkernel_scheduled.c"
+    else:
+        model = _build_model(args)
+        generate(
+            model,
+            output,
+            precision=args.precision,
+            table_points=args.table_points,
+            max_c_rate=args.max_c_rate,
+        )
+        source = "cellkernel_estimator.c"
+
+    print(f"{model.n_states} states, {args.precision} precision\n")
+    print(f"  {'target':>14s} {'opt':>5s} {'flash':>9s} {'code':>9s} {'tables':>9s}")
+    print("  " + "-" * 50)
+    for target, label in ((CORTEX_M4F, "cortex-m4f"), (CORTEX_M0, "cortex-m0plus")):
+        for level in ("-Os", "-O2"):
+            m = measure_arm_footprint(output, target=target, optimisation=level, source=source)
+            print(
+                f"  {label:>14s} {level:>5s} {m.flash_bytes:8d} B "
+                f"{m.text_bytes:8d} B {m.rodata_bytes:8d} B"
+            )
+
+    if not args.scheduled:
+        budget = estimate_budget(spec_from_spm(model), precision=args.precision)
+        error = 100.0 * (budget.flash_bytes - m.rodata_bytes) / m.rodata_bytes
+        print(
+            f"\n  tables: modelled {budget.flash_bytes} B, measured {m.rodata_bytes} B "
+            f"({error:+.1f}%)"
+        )
+    print(
+        "\n  Measured by cross-compiling and reading the object file's sections,\n"
+        "  which is the accounting a firmware engineer does. Code is roughly as\n"
+        "  large as the tables it reads, so a flash figure counting only tables --\n"
+        "  which is what the modelled budget reports -- is short by about half.\n"
+        "  The Cortex-M0+ row is the honest answer to whether this runs on a part\n"
+        "  without an FPU: it does, and every float becomes a library call."
+    )
+
+    if find_qemu() is None:
+        print("\n  Install QEMU to also measure instructions per step.")
+        return 0
+
+    print("\n  Instructions retired per filter step, on an emulated Cortex-M4:")
+    for level in ("-Os", "-O2"):
+        count = measure_arm_instructions(output, optimisation=level, source=source)
+        line = f"    {level:>4s}  {count:,.0f} instructions"
+        if not args.scheduled:
+            line += f"   (modelled {budget.estimated_cycles:,} cycles)"
+        print(line)
+    print(
+        "\n  Instructions, not cycles: QEMU models no pipeline, no flash wait\n"
+        "  states and no memory system, so real silicon will take at least this\n"
+        "  many and generally more. The modelled figure alongside is lower still,\n"
+        "  which is worth knowing before sizing a task period from it."
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cellkernel",
@@ -396,6 +485,17 @@ def build_parser() -> argparse.ArgumentParser:
     age.add_argument("--cycles", type=int, default=300)
     age.add_argument("--c-rate", type=float, default=1.0)
     age.set_defaults(func=_cmd_age)
+
+    measure = subparsers.add_parser(
+        "measure", help="cross-compile for ARM and report the real footprint"
+    )
+    measure.add_argument("output", help="output directory")
+    _add_model_options(measure)
+    measure.add_argument("--precision", choices=("float", "double"), default="float")
+    measure.add_argument("--table-points", type=int, default=257)
+    measure.add_argument("--max-c-rate", type=float, default=3.0)
+    measure.add_argument("--scheduled", action="store_true")
+    measure.set_defaults(func=_cmd_measure)
 
     return parser
 

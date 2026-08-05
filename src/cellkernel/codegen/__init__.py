@@ -46,6 +46,15 @@ from pathlib import Path
 
 from .budget import ResourceBudget, estimate_budget
 from .emit import emit_header, emit_main, emit_source
+from .measure import (
+    CORTEX_M0,
+    CORTEX_M4F,
+    ArmMeasurement,
+    find_arm_toolchain,
+    find_qemu,
+    measure_arm_footprint,
+    measure_arm_instructions,
+)
 from .spec import EstimatorSpec, ReferenceEstimator, spec_from_spm, table_backed_model
 from .thermal_emit import emit_thermal_header, emit_thermal_main, emit_thermal_source
 from .thermal_spec import (
@@ -55,6 +64,9 @@ from .thermal_spec import (
 )
 
 __all__ = [
+    "CORTEX_M0",
+    "CORTEX_M4F",
+    "ArmMeasurement",
     "EstimatorSpec",
     "GeneratedProject",
     "ReferenceEstimator",
@@ -62,8 +74,12 @@ __all__ = [
     "ThermalEstimatorSpec",
     "ThermalReferenceEstimator",
     "estimate_budget",
+    "find_arm_toolchain",
+    "find_qemu",
     "generate",
     "generate_scheduled",
+    "measure_arm_footprint",
+    "measure_arm_instructions",
     "spec_from_spm",
     "spec_from_thermal_spm",
     "table_backed_model",
