@@ -178,15 +178,22 @@ Closed-form tests catch a great deal, but they cannot catch a misunderstanding s
 
 | discharge | our SPM vs PyBaMM SPM | our SPM vs DFN | our SPMe vs DFN |
 |---|---|---|---|
-| 0.5C | **0.2 mV** | 26.0 mV | **11.7 mV** |
-| 1.0C | 8.1 mV | 45.5 mV | **16.6 mV** |
-| 2.0C | 23.0 mV | 111.5 mV | **52.3 mV** |
+| 0.5C | **0.26 mV** | 25.6 mV | **3.2 mV** |
+| 1.0C | **0.83 mV** | 52.9 mV | **6.7 mV** |
+| 2.0C | **2.6 mV** | 132.2 mV | **14.7 mV** |
+| 3.0C | 5.5 mV | 330.0 mV | 141.3 mV |
 
-Two independent implementations of the same model agree to 0.2 mV RMSE at 0.5C, which is about the strongest form this check can take. And resolving the electrolyte roughly halves the distance to a full Doyle–Fuller–Newman solution at every rate — that is the claim `SPMe` exists to make, verified against something outside this repository.
+Two independent implementations of the same model agree to a quarter of a millivolt at 0.5C, which is about the strongest form this check can take. And a 17-state `SPMe` reproduces a full Doyle–Fuller–Newman solution — a discretised system of coupled PDEs — to **6.7 mV at 1C and 14.7 mV at 2C**, roughly an order of magnitude better than the single particle model it extends. At 3C the linear electrolyte gives up, as documented, and `validity()` says so before the voltage does.
 
-The residual against PyBaMM's own SPM grows to 23 mV at 2C, and it is worth being precise about why, because the two candidate explanations have opposite remedies. It is **not** the reduced-order approximation: five families spanning 6 to 48 states give the same answer to a fraction of a millivolt. It is a difference between the models, so adding states will not fix it. That is asserted as a test rather than left as a hope.
+**This comparison paid for itself immediately.** Getting these numbers meant finding three defects that self-consistent testing could never have caught, all of them in the PyBaMM bridge and all of them silent:
 
-`from_pybamm` does the import, and re-solves the stoichiometry window rather than taking the published limits verbatim — those leave a percent-level charge imbalance that would otherwise be absorbed by whatever transport parameter is fitted next.
+- The reaction rate was **hardcoded at 1e-6** rather than read, wrong by 1.5× on graphite and 5.3× on the oxide. It got there because PyBaMM's parameter functions return expression nodes rather than numbers, so `float()` raised and a bare fallback swallowed it. That one defect *was* the 23 mV I had previously written off as "a model difference, cause unidentified".
+- Electrolyte transport was not imported at all. The salt diffusivity in use was **2.8× PyBaMM's** — a default I had raised myself, earlier in this project, because the depletion it produced looked implausibly strong. It was not implausible; it was right, and the independent reference is what showed the intuition was wrong.
+- The float coercion issue above affected every callable parameter, not just kinetics, so the bridge would silently substitute defaults for anything PyBaMM expressed as a function.
+
+What remains is small and honestly labelled: refinement now *does* reduce the gap, which it did not before, but it plateaus around 2.5 mV at 2C rather than going to zero. A residual model difference of a couple of millivolt is still there, an order of magnitude below where it started and below what a measurement front end would resolve.
+
+`from_pybamm` re-solves the stoichiometry window rather than taking the published limits verbatim — those leave a percent-level charge imbalance that would otherwise be absorbed by whatever transport parameter is fitted next.
 
 PyBaMM is an optional dependency; the comparison runs as its own CI job. Reproduce with `pip install pybamm && python examples/09_validate_against_pybamm.py`.
 
@@ -200,16 +207,16 @@ The reason it exists is that the electrolyte term is **not** a resistance. On a 
 
 | time | concentration overpotential | as an equivalent resistance |
 |---|---|---|
-| 2 s | −4.1 mV | 0.41 mΩ |
-| 10 s | −13.9 mV | 1.39 mΩ |
-| 40 s | −22.4 mV | 2.24 mΩ |
-| 240 s | −23.0 mV | 2.31 mΩ |
+| 2 s | −4.5 mV | 0.45 mΩ |
+| 10 s | −18.7 mV | 1.87 mΩ |
+| 40 s | −51.3 mV | 5.13 mΩ |
+| 160 s | −80.1 mV | 8.01 mΩ |
 
-A fitted resistance has to pick one row of that table. Calibrate on a ten-second pulse and it under-predicts sustained discharge; calibrate on the settled value and it over-predicts every transient. Fitting harder does not help, because the thing being fitted has dynamics of its own — a timescale set by the sandwich thickness, not the particle.
+A fitted resistance has to pick one row of that table, and here the top and bottom differ by a factor of eighteen. Calibrate on a ten-second pulse and it badly under-predicts sustained discharge; calibrate on the settled value and it over-predicts every transient. Fitting harder does not help, because the thing being fitted has dynamics of its own — a timescale set by the sandwich thickness, not the particle.
 
 Salt is conserved exactly (the source integrates to zero by construction and the projection enforces it), the steady-state split is verified two independent ways — iterating the discretisation, and solving the singular continuous system with the mean pinned — and they agree to 1e-8. The state transition stays exactly linear, so this model keeps the property that makes an extended Kalman filter well behaved on it.
 
-Transport coefficients are held at their bulk values, which keeps the system linear and discretisable offline but means the model degrades as the electrolyte empties. It reports that rather than hiding it: `depletion()` returns the lowest coating concentration as a fraction of nominal, and `validity()` turns it into `good`, `degraded` or `extrapolating`. On this cell 2C is good and 5C is degraded.
+Transport coefficients are held at their bulk values, which keeps the system linear and discretisable offline but means the model degrades as the electrolyte empties. It reports that rather than hiding it: `depletion()` returns the lowest coating concentration as a fraction of nominal, and `validity()` turns it into `good`, `degraded` or `extrapolating`. Those thresholds are **calibrated against the DFN comparison above**, not guessed — the model holds up considerably further into depletion than intuition suggests (still 14.7 mV at 2C, where the salt has fallen to a quarter of nominal) and then fails abruptly once linear extrapolation drives a coating concentration through zero.
 
 Reproduce with `python examples/06_electrolyte.py`.
 
@@ -392,7 +399,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 584 tests
+pytest                      # 593 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 

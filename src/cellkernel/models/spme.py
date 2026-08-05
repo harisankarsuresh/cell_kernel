@@ -275,21 +275,41 @@ class SPMe(CellModel):
         that prevents that is conductivity and diffusivity collapsing as the salt
         runs out, which a constant-property model does not have.
 
-        Read it as: above about 0.6 the model is quantitative; between 0.3 and
-        0.6 it is directionally right but optimistic, because real transport
-        degrades faster than linear as concentration falls; below 0.3 it is
-        extrapolating past anything it can represent and the voltage should not
-        be believed. :meth:`validity` turns the same number into a label.
+        The thresholds :meth:`validity` applies to it are calibrated against a
+        full Doyle-Fuller-Newman solution rather than guessed. On the reference
+        cell, discharging until the salt profile settles:
+
+        ===========  ==========  ==========================
+        rate         depletion   error against DFN
+        ===========  ==========  ==========================
+        0.5C         0.81        3.2 mV
+        1.0C         0.62        6.7 mV
+        2.0C         0.23        14.7 mV
+        3.0C         below zero  141 mV
+        ===========  ==========  ==========================
+
+        So the model holds up considerably further into depletion than intuition
+        suggests, and then fails abruptly once the linear extrapolation drives a
+        coating concentration through zero -- which is the point at which it has
+        stopped representing anything. An earlier version of this docstring put
+        the boundary at 0.6 on the strength of a guess; the measurement moved it.
         """
         ce_n, ce_p = self.electrolyte_concentrations(x)
         return float(min(ce_n, ce_p) / self.parameters.electrolyte_concentration)
 
     def validity(self, x: np.ndarray) -> str:
-        """``"good"``, ``"degraded"`` or ``"extrapolating"`` from :meth:`depletion`."""
+        """``"good"``, ``"degraded"`` or ``"extrapolating"`` from :meth:`depletion`.
+
+        Boundaries at 0.2 and 0.05, from the comparison tabulated in
+        :meth:`depletion`. Read ``"good"`` as agreeing with a full solution to
+        better than about 15 mV, ``"degraded"`` as directionally right and
+        progressively optimistic, and ``"extrapolating"`` as approaching or past
+        the concentration going negative, where the voltage means nothing.
+        """
         fraction = self.depletion(x)
-        if fraction >= 0.6:
+        if fraction >= 0.2:
             return "good"
-        if fraction >= 0.3:
+        if fraction >= 0.05:
             return "degraded"
         return "extrapolating"
 
@@ -352,11 +372,19 @@ class SPMe(CellModel):
         raises the magnitude of the overpotential, which is the mechanism by
         which the electrolyte limits high-rate performance beyond its ohmic
         contribution.
+
+        Returns zero where the concentration floor is active, because there the
+        voltage genuinely stops depending on the state. Reporting the unclamped
+        slope instead hands a filter a gradient the measurement function does not
+        have, and a Jacobian that disagrees with its own output is worse than a
+        crude one because nothing downstream can detect it.
         """
-        ce = max(c_e, 1e-3 * self.parameters.electrolyte_concentration)
-        i0 = self._exchange_current(c_surf, ce, side)
+        floor = 1e-3 * self.parameters.electrolyte_concentration
+        if c_e <= floor:
+            return 0.0
+        i0 = self._exchange_current(c_surf, c_e, side)
         u = j / (2.0 * i0)
-        return self._kinetic_prefactor * (-u * 0.5 / ce) / np.sqrt(1.0 + u * u)
+        return self._kinetic_prefactor * (-u * 0.5 / c_e) / np.sqrt(1.0 + u * u)
 
     def voltage_jacobian(self, x: np.ndarray, current: float) -> np.ndarray:
         current = float(current)
@@ -380,12 +408,16 @@ class SPMe(CellModel):
         grad[self._n_neg : self._i_elec] = dv_dcp * self.ss_pos.C[0]
 
         # Salt affects voltage twice: through each exchange current, and through
-        # the logarithm of the concentration ratio.
+        # the logarithm of the concentration ratio. Both contributions vanish
+        # where the concentration floor is active, so that the gradient stays
+        # consistent with the voltage the model actually reports.
         floor = 1e-3 * self.parameters.electrolyte_concentration
         dv_dce_n = -self._d_overpotential_d_salt(cs_n, ce_n, j_n, "negative")
-        dv_dce_n -= self._concentration_prefactor / max(ce_n, floor)
+        if ce_n > floor:
+            dv_dce_n -= self._concentration_prefactor / ce_n
         dv_dce_p = self._d_overpotential_d_salt(cs_p, ce_p, j_p, "positive")
-        dv_dce_p += self._concentration_prefactor / max(ce_p, floor)
+        if ce_p > floor:
+            dv_dce_p += self._concentration_prefactor / ce_p
 
         grad[self._i_elec :] = (
             dv_dce_n * self.ss_electrolyte.C[0] + dv_dce_p * self.ss_electrolyte.C[1]

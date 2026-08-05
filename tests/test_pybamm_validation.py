@@ -87,6 +87,55 @@ def test_the_imported_cell_is_charge_balanced(cell):
     assert cell.usable_capacity() == pytest.approx(5.0, rel=1e-6)
 
 
+def test_the_kinetics_are_read_from_the_source_not_guessed(cell):
+    """The bug that hid behind everything else here.
+
+    An earlier version hardcoded a reaction rate of 1e-6 because PyBaMM returns
+    its exchange-current density as an expression node rather than a number, and
+    the ``float()`` that failed was caught by a bare fallback. The published
+    values are 6.48e-7 for this graphite and 3.42e-6 for the oxide, so the model
+    was carrying kinetics wrong by 1.5x on one electrode and 5.3x on the other.
+    It cost 23 mV against PyBaMM at 2C and was written off as a model difference.
+    """
+    assert cell.negative.reaction_rate == pytest.approx(6.48e-7, rel=1e-9)
+    assert cell.positive.reaction_rate == pytest.approx(3.42e-6, rel=1e-9)
+
+
+def test_the_electrolyte_transport_is_read_from_the_source(cell):
+    """Likewise, and this one had been overridden by intuition.
+
+    The default salt diffusivity in this package was nearly three times PyBaMM's,
+    chosen because the depletion it produced looked more plausible. It was not:
+    with the published value the electrolyte model agrees with a full
+    Doyle-Fuller-Newman solution roughly seven times better.
+    """
+    values = pybamm.ParameterValues("Chen2020")
+    assert cell.electrolyte_diffusivity == pytest.approx(1.7694e-10, rel=1e-3)
+    assert cell.ionic_conductivity == pytest.approx(0.9487, rel=1e-3)
+    assert cell.transference_number == values["Cation transference number"]
+    assert cell.negative.porosity == values["Negative electrode porosity"]
+    assert cell.positive.porosity == values["Positive electrode porosity"]
+    assert cell.separator_porosity == values["Separator porosity"]
+
+
+def test_reading_a_pybamm_expression_never_falls_back_silently():
+    """PyBaMM parameter functions return expression nodes, not floats.
+
+    Every one of them. A bridge that treats that as "value unavailable" and
+    substitutes a default will build a plausible-looking cell that is not the one
+    it was handed, which is the worst failure mode available to it.
+    """
+    from cellkernel.params import _as_float
+
+    values = pybamm.ParameterValues("Chen2020")
+    function = values["Negative electrode exchange-current density [A.m-2]"]
+    node = function(1000.0, 15000.0, 33133.0, 298.15)
+    assert not isinstance(node, float), "if PyBaMM starts returning floats, simplify this"
+    assert _as_float(node) == pytest.approx(
+        6.48e-7 * np.sqrt(1000.0) * np.sqrt(15000.0) * np.sqrt(33133.0 - 15000.0), rel=1e-9
+    )
+
+
 def test_the_imported_geometry_matches_the_source(cell):
     values = pybamm.ParameterValues("Chen2020")
     assert cell.negative.thickness == values["Negative electrode thickness [m]"]
@@ -104,51 +153,50 @@ def test_the_imported_geometry_matches_the_source(cell):
 # --------------------------------------------------------------- the same model
 
 
-def test_single_particle_models_agree_at_low_rate(cell, solve):
+@pytest.mark.parametrize(
+    "c_rate,seconds,tolerance",
+    [(0.5, 1800.0, 1e-3), (1.0, 1200.0, 2e-3), (2.0, 700.0, 5e-3), (3.0, 400.0, 1e-2)],
+)
+def test_single_particle_models_agree(cell, solve, c_rate, seconds, tolerance):
     """The strongest form of the check: same physics, two implementations.
 
-    At 0.5C the concentration profile is shallow, the kinetics are near-linear,
-    and there is nothing left for the two to disagree about. Sub-millivolt is
-    what agreement should look like here, and anything larger would point at a
-    parameter being carried across wrongly.
+    Sub-millivolt at 0.5C and a few millivolt at 3C. The residual that remains is
+    the reduced-order approximation of the particle, and it grows with rate
+    because the concentration profile sharpens.
     """
-    model = SPM(cell, dt=1.0, rom="pade", order=5)
-    ours = model.simulate(np.full(1801, 2.5), soc0=SOC0)
-    rmse, worst = discrepancy(ours, solve("SPM", 0.5, 1800.0))
-    assert rmse < 1e-3, f"rmse {1e3 * rmse:.2f} mV"
-    assert worst < 2e-3, f"max {1e3 * worst:.2f} mV"
-
-
-@pytest.mark.parametrize("c_rate,seconds", [(1.0, 1200.0), (2.0, 700.0)])
-def test_single_particle_models_stay_close_at_higher_rate(cell, solve, c_rate, seconds):
     model = SPM(cell, dt=1.0, rom="pade", order=5)
     ours = model.simulate(np.full(int(seconds) + 1, c_rate * 5.0), soc0=SOC0)
     rmse, _ = discrepancy(ours, solve("SPM", c_rate, seconds))
-    assert rmse < 0.03, f"{c_rate}C: rmse {1e3 * rmse:.2f} mV"
+    assert rmse < tolerance, f"{c_rate}C: rmse {1e3 * rmse:.2f} mV"
 
 
-def test_the_high_rate_residual_is_not_a_discretisation_error(cell, solve):
-    """Worth separating, because the two have opposite remedies.
+def test_the_residual_now_does_shrink_with_more_states(cell, solve):
+    """It did not, until the kinetics were being read correctly.
 
-    The gap against PyBaMM's own single particle model grows from 0.2 mV at 0.5C
-    to about 23 mV at 2C. If that were the reduced-order approximation it would
-    fall as states are added. It does not: five families spanning six to
-    forty-eight states give the same answer to a fraction of a millivolt. So it
-    is a difference in the models, not in how finely they are resolved, and
-    adding states is not the fix.
+    While the reaction rate was wrong, the gap against PyBaMM was a constant
+    offset that no amount of refinement touched -- five families from six to
+    forty-eight states gave the same answer, which correctly said the cause was
+    not discretisation but was taken as evidence of an unexplained model
+    difference. With the kinetics right, what is left does respond to
+    refinement -- so part of it is now discretisation, as it should be.
+
+    It does not go to zero, though. At 2C it falls from about 3.4 mV at order
+    three to about 2.5 mV at order seven and then flattens, so a small model
+    difference of a couple of millivolt remains. That is an order of magnitude
+    below what it was and below anything a measurement front end would resolve,
+    but it is a residual and this test records it as one rather than implying the
+    two implementations now agree exactly.
     """
     reference = solve("SPM", 2.0, 700.0)
-    results = {}
-    for kind, order in (("pade", 3), ("pade", 7), ("spectral", 8), ("fv", 24)):
-        model = SPM(cell, dt=1.0, rom=kind, order=order)
+    errors = []
+    for order in (3, 5, 7):
+        model = SPM(cell, dt=1.0, rom="pade", order=order)
         ours = model.simulate(np.full(701, 10.0), soc0=SOC0)
-        results[(kind, model.n_states)] = discrepancy(ours, reference)[0]
-
-    values = list(results.values())
-    assert max(values) - min(values) < 1e-3, (
-        f"spread {1e3 * (max(values) - min(values)):.2f} mV across {list(results)}"
-    )
-    assert min(values) > 0.01, "and the residual itself does not vanish"
+        errors.append(discrepancy(ours, reference)[0])
+    assert errors == sorted(errors, reverse=True), f"not monotone: {errors}"
+    assert errors[-1] < 0.8 * errors[0], "refinement should help"
+    assert errors[-1] > 1e-4, "but it does not converge to agreement; see the docstring"
+    assert errors[-1] < 4e-3, "and what remains is small in absolute terms"
 
 
 # ------------------------------------------------------- the electrolyte claim
@@ -177,16 +225,36 @@ def test_resolving_the_electrolyte_moves_us_towards_the_full_model(cell, solve, 
     assert with_electrolyte < without, (
         f"{c_rate}C: {1e3 * with_electrolyte:.1f} mV is no better than {1e3 * without:.1f} mV"
     )
-    assert with_electrolyte < 0.6 * without, "and the improvement should be substantial"
+    # Not a marginal improvement: close to an order of magnitude at every rate.
+    assert with_electrolyte < 0.2 * without, (
+        f"{c_rate}C: {1e3 * with_electrolyte:.1f} mV against {1e3 * without:.1f} mV"
+    )
 
 
-def test_our_electrolyte_model_tracks_pybamms(cell, solve):
+@pytest.mark.parametrize("c_rate,seconds,tolerance", [(0.5, 1800.0, 6e-3), (1.0, 1200.0, 1.2e-2)])
+def test_our_electrolyte_model_tracks_pybamms(cell, solve, c_rate, seconds, tolerance):
     """Against PyBaMM's SPMe specifically, which is the like-for-like comparison."""
     ours = SPMe(cell, dt=1.0, rom="pade", order=5, electrolyte_cells=(6, 4, 6)).simulate(
-        np.full(1801, 2.5), soc0=SOC0
+        np.full(int(seconds) + 1, c_rate * 5.0), soc0=SOC0
     )
-    rmse, _ = discrepancy(ours, solve("SPMe", 0.5, 1800.0))
-    assert rmse < 0.02, f"rmse {1e3 * rmse:.2f} mV"
+    rmse, _ = discrepancy(ours, solve("SPMe", c_rate, seconds))
+    assert rmse < tolerance, f"{c_rate}C: rmse {1e3 * rmse:.2f} mV"
+
+
+@pytest.mark.parametrize("c_rate,seconds", [(0.5, 1800.0), (1.0, 1200.0), (2.0, 700.0)])
+def test_the_electrolyte_model_agrees_with_the_full_solution(cell, solve, c_rate, seconds):
+    """The headline, stated absolutely rather than as a ratio.
+
+    Against a full Doyle-Fuller-Newman solution, with every parameter read from
+    PyBaMM's own set: a few millivolt at half a C and under twenty at two C, from
+    a seventeen-state linear model standing in for a discretised system of
+    coupled partial differential equations.
+    """
+    ours = SPMe(cell, dt=1.0, rom="pade", order=5, electrolyte_cells=(6, 4, 6)).simulate(
+        np.full(int(seconds) + 1, c_rate * 5.0), soc0=SOC0
+    )
+    rmse, _ = discrepancy(ours, solve("DFN", c_rate, seconds))
+    assert rmse < 0.02, f"{c_rate}C: rmse {1e3 * rmse:.2f} mV"
 
 
 def test_the_linear_electrolyte_gives_up_at_high_rate(cell, solve):

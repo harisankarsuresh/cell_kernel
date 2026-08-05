@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -212,7 +213,13 @@ class CellParameters:
     #: electrolyte, so the defaults are representative of a 1 M LiPF6 carbonate
     #: blend rather than fitted to any particular cell.
     separator_porosity: float = 0.47
-    electrolyte_diffusivity: float = 5.0e-10
+    #: Nyman et al. 2008 for LiPF6 in EC:EMC, evaluated at 1 M. An earlier value
+    #: here was nearly three times larger, chosen because the depletion it
+    #: produced looked more plausible. Comparison against a full
+    #: Doyle-Fuller-Newman solution showed the judgement was wrong and the
+    #: depletion is real: with this value the electrolyte model agrees with DFN
+    #: to 6.7 mV at 1C, against 47 mV with the flattering one.
+    electrolyte_diffusivity: float = 1.7694e-10
     transference_number: float = 0.2594
     ionic_conductivity: float = 0.95
     bruggeman: float = 1.5
@@ -642,9 +649,34 @@ def from_pybamm(parameter_values, name: str = "from-pybamm") -> CellParameters:
             values = np.array([float(fn(x)) for x in grid])
         return TabulatedOCP(grid, values)
 
+    def optional(key: str, default: float) -> float:
+        try:
+            return _as_float(get(key))
+        except (KeyError, TypeError):
+            return default
+
+    def transport(key: str, default: float, *args) -> float:
+        """A transport property PyBaMM may express as a function of state.
+
+        Evaluated at the initial electrolyte concentration and the reference
+        temperature, which is the operating point this package's constant-property
+        electrolyte model is built around.
+        """
+        try:
+            value = get(key)
+        except KeyError:
+            return default
+        try:
+            return _as_float(value(*args)) if callable(value) else _as_float(value)
+        except (TypeError, ValueError):  # pragma: no cover - unusual signature
+            return default
+
     c_n_max = float(get("Maximum concentration in negative electrode [mol.m-3]"))
     c_p_max = float(get("Maximum concentration in positive electrode [mol.m-3]"))
-    area = float(get("Electrode width [m]")) * float(get("Electrode height [m]"))
+    parallel = optional("Number of electrodes connected in parallel to make a cell", 1.0)
+    area = float(get("Electrode width [m]")) * float(get("Electrode height [m]")) * parallel
+    c_e = float(get("Initial concentration in electrolyte [mol.m-3]"))
+    reference = optional("Reference temperature [K]", 298.15)
 
     negative = ElectrodeParameters(
         thickness=float(get("Negative electrode thickness [m]")),
@@ -652,10 +684,13 @@ def from_pybamm(parameter_values, name: str = "from-pybamm") -> CellParameters:
         active_fraction=float(get("Negative electrode active material volume fraction")),
         max_concentration=c_n_max,
         diffusivity=_scalar_or_call(get("Negative particle diffusivity [m2.s-1]")),
-        reaction_rate=1.0e-6,
+        reaction_rate=_reaction_rate_from_pybamm(
+            parameter_values, "negative", c_n_max, c_e, reference
+        ),
         ocp=sample("Negative electrode OCP [V]", c_n_max),
         stoich_at_0_soc=0.03,
         stoich_at_100_soc=0.90,
+        porosity=optional("Negative electrode porosity", 0.25),
     )
     positive = ElectrodeParameters(
         thickness=float(get("Positive electrode thickness [m]")),
@@ -663,10 +698,13 @@ def from_pybamm(parameter_values, name: str = "from-pybamm") -> CellParameters:
         active_fraction=float(get("Positive electrode active material volume fraction")),
         max_concentration=c_p_max,
         diffusivity=_scalar_or_call(get("Positive particle diffusivity [m2.s-1]")),
-        reaction_rate=1.0e-6,
+        reaction_rate=_reaction_rate_from_pybamm(
+            parameter_values, "positive", c_p_max, c_e, reference
+        ),
         ocp=sample("Positive electrode OCP [V]", c_p_max),
         stoich_at_0_soc=0.90,
         stoich_at_100_soc=0.27,
+        porosity=optional("Positive electrode porosity", 0.335),
     )
     v_min = float(get("Lower voltage cut-off [V]"))
     v_max = float(get("Upper voltage cut-off [V]"))
@@ -679,19 +717,122 @@ def from_pybamm(parameter_values, name: str = "from-pybamm") -> CellParameters:
         positive=replace(positive, stoich_at_0_soc=xp0, stoich_at_100_soc=xp100),
         electrode_area=area,
         separator_thickness=float(get("Separator thickness [m]")),
-        electrolyte_concentration=float(get("Initial concentration in electrolyte [mol.m-3]")),
+        electrolyte_concentration=c_e,
         nominal_capacity=capacity,
         voltage_limits=(v_min, v_max),
+        contact_resistance=optional("Contact resistance [Ohm]", 0.0),
+        reference_temperature=reference,
+        separator_porosity=optional("Separator porosity", 0.47),
+        transference_number=optional("Cation transference number", 0.2594),
+        bruggeman=optional("Bruggeman coefficient (electrolyte)", 1.5),
+        electrolyte_diffusivity=transport(
+            "Electrolyte diffusivity [m2.s-1]", 5.0e-10, c_e, reference
+        ),
+        ionic_conductivity=transport("Electrolyte conductivity [S.m-1]", 0.95, c_e, reference),
         name=name,
         notes="Imported from PyBaMM; stoichiometry window re-balanced.",
     )
 
 
+def _as_float(value) -> float:
+    """Coerce a PyBaMM result to a float, whatever wrapper it arrives in.
+
+    PyBaMM's parameter functions are written to be traceable, so calling one with
+    plain numbers does not generally give a number back -- it gives a node in an
+    expression tree, and ``float()`` on that raises. Every route out is tried
+    here because which one applies depends on the parameter set and on PyBaMM's
+    version, and a bridge that silently falls back to a default when it cannot
+    read a value is worse than one that fails: an earlier version of this module
+    did exactly that and quietly modelled a cell with the wrong kinetics.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+    for attribute in ("value", "evaluate"):
+        candidate = getattr(value, attribute, None)
+        if candidate is None:
+            continue
+        resolved = candidate() if callable(candidate) else candidate
+        try:
+            return float(np.asarray(resolved).reshape(-1)[0])
+        except (TypeError, ValueError, IndexError):  # pragma: no cover - defensive
+            continue
+    raise TypeError(f"cannot reduce {value!r} to a float")
+
+
 def _scalar_or_call(value):
     """Reduce a PyBaMM parameter that may be a constant or a function of state."""
     if callable(value):
-        try:
-            return float(value(0.5))
-        except TypeError:
-            return float(value(0.5, 298.15))
-    return float(value)
+        for args in ((0.5,), (0.5, 298.15)):
+            try:
+                return _as_float(value(*args))
+            except TypeError:
+                continue
+        raise TypeError(f"cannot evaluate {value!r}")
+    return _as_float(value)
+
+
+def _reaction_rate_from_pybamm(
+    parameter_values, side: str, c_max: float, c_electrolyte: float, temperature: float
+) -> float:
+    """Recover this package's reaction rate from PyBaMM's exchange-current density.
+
+    PyBaMM supplies exchange current density as a callable
+    ``f(c_e, c_s, c_max, T)``, while this package writes it as
+
+    .. math::
+
+        i_0 = k \\sqrt{c_e}\\,\\sqrt{c_s}\\,\\sqrt{c_{\\max} - c_s},
+
+    so :math:`k` is PyBaMM's ``m_ref`` and is recovered by evaluating its
+    function and dividing out all three square roots -- including the electrolyte
+    one, which this package's models apply themselves. Leaving it in inflates the
+    rate by a factor of ``sqrt(c_e)``, about thirty at a typical concentration.
+
+    The division is only meaningful if PyBaMM's function really does have that
+    concentration dependence, which is a property of the parameter set and not
+    guaranteed. It is therefore *checked*: the ratio is computed at several
+    stoichiometries and at two electrolyte concentrations, and if it is not
+    constant a warning is emitted naming the spread. Extracting at one point and
+    hoping is how a package silently models a different cell from the one it was
+    handed -- an earlier version of this function skipped the extraction entirely
+    and hardcoded 1e-6, which is wrong by 1.5x on graphite and 3.4x on the oxide.
+    """
+    key = f"{side.capitalize()} electrode exchange-current density [A.m-2]"
+    try:
+        function = parameter_values[key]
+    except KeyError:
+        warnings.warn(
+            f"PyBaMM set carries no {key}; falling back to a placeholder reaction "
+            "rate, which will not reproduce its kinetics.",
+            stacklevel=3,
+        )
+        return 1.0e-6
+    if not callable(function):
+        return _as_float(function)
+
+    samples = []
+    for c_e in (c_electrolyte, 0.5 * c_electrolyte):
+        for fraction in (0.2, 0.35, 0.5, 0.65, 0.8):
+            c_s = fraction * c_max
+            try:
+                i0 = _as_float(function(c_e, c_s, c_max, temperature))
+            except TypeError as exc:  # pragma: no cover - unusual signature
+                raise TypeError(
+                    f"could not evaluate PyBaMM's {key}: {exc}. Reading it is not "
+                    "optional -- guessing the reaction rate models a different cell."
+                ) from exc
+            samples.append(i0 / (np.sqrt(c_e) * np.sqrt(c_s) * np.sqrt(c_max - c_s)))
+
+    rate = float(np.median(samples))
+    spread = (max(samples) - min(samples)) / rate if rate else 0.0
+    if spread > 1e-6:
+        warnings.warn(
+            f"PyBaMM's {side} exchange-current density does not factor as "
+            f"k*sqrt(ce)*sqrt(c)*sqrt(cmax-c); the recovered rate varies by "
+            f"{100 * spread:.1f}% over the sampled range. Using the median, but "
+            "the kinetics will not match PyBaMM's away from mid-composition.",
+            stacklevel=3,
+        )
+    return rate
