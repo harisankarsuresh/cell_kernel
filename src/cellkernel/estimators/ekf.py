@@ -114,17 +114,21 @@ class EKF(Estimator):
         prior = self.x.copy()
         innovation = float(voltage) - model.voltage(prior, current)
 
+        # Zero for any state the model declares a known function of the current
+        # history. Those still propagate; they simply take no correction.
+        mask = self.correction_mask.reshape(-1, 1)
+
         estimate = prior
         H = model.voltage_jacobian(prior, current).reshape(1, -1)
         PH = self.P @ H.T
         S = float((H @ PH).item()) + self.R
-        K = PH / S
+        K = (PH / S) * mask
 
         for _ in range(self.iterations):
             H = model.voltage_jacobian(estimate, current).reshape(1, -1)
             PH = self.P @ H.T
             S = float((H @ PH).item()) + self.R
-            K = PH / S
+            K = (PH / S) * mask
             # Gauss-Newton step measured from the prior, not from the current
             # iterate, so the prior's information is not counted repeatedly.
             residual = (

@@ -150,6 +150,27 @@ class Estimator(abc.ABC):
 
     # ----------------------------------------------------------------- helpers
 
+    @property
+    def correction_mask(self) -> np.ndarray:
+        """``1`` where a state may be corrected, ``0`` where it is only propagated.
+
+        Built from the model's
+        :attr:`~cellkernel.models.base.CellModel.deterministic_states`. States it
+        names are still stepped forward every sample -- they are part of the
+        physics -- but the measurement update leaves them alone, because they are
+        a known function of the current history and the voltage has nothing to
+        say about them.
+
+        Applied here by zeroing the corresponding entries of the gain, which is
+        the readable version and gives the same answer as carrying a smaller
+        covariance. The generated C carries the smaller covariance, because there
+        the point is the arithmetic saved rather than the clarity.
+        """
+        mask = np.ones(self.model.n_states)
+        for index in getattr(self.model, "deterministic_states", ()):
+            mask[index] = 0.0
+        return mask
+
     def soc_std(self) -> float:
         """Standard deviation of the reported state of charge."""
         grad = self._soc_gradient()

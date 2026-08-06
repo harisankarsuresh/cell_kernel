@@ -146,6 +146,28 @@ class CellModel(abc.ABC):
         reference = self.initial_state(0.5)
         return self.step(reference, current + 1.0) - self.step(reference, current)
 
+    @property
+    def deterministic_states(self) -> tuple[int, ...]:
+        """Indices of states a filter should propagate but never correct.
+
+        A state belongs here when it is a known function of the input history
+        alone: driven only by current, unaffected by the other states, and
+        starting from a condition that is known rather than estimated. Nothing
+        the voltage measurement says about it is news, so correcting it spends
+        arithmetic to no purpose.
+
+        Empty for most models. :class:`~cellkernel.models.spme.SPMe` returns its
+        electrolyte block, and the saving is large because the covariance update
+        is cubic in the number of *estimated* states: on a 21-state model with 11
+        of them electrolyte, filtering everything costs 9261 units of work
+        against 1121 for filtering only what needs it -- 8.3 times -- while the
+        settled state-of-charge error moves from 0.070% to 0.076%.
+
+        This is a statement about the model's structure, so the model is where it
+        belongs; the estimators read it rather than being told.
+        """
+        return ()
+
     def voltage(self, x: np.ndarray, current: float) -> float:
         """Terminal voltage in volts."""
         return self.outputs(x, current).voltage

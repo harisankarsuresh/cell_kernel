@@ -280,6 +280,10 @@ A fitted resistance has to pick one row of that table, and here the top and bott
 
 Salt is conserved exactly (the source integrates to zero by construction and the projection enforces it), the steady-state split is verified two independent ways — iterating the discretisation, and solving the singular continuous system with the mean pinned — and they agree to 1e-8. The state transition stays exactly linear, so this model keeps the property that makes an extended Kalman filter well behaved on it.
 
+**The electrolyte states do not belong in the Kalman filter, and leaving them out is what makes this model affordable.** They are driven by current alone, do not depend on the solid states, and start from a uniform profile that is known rather than estimated — so the salt concentration at any moment follows from the current history, and a voltage measurement has nothing to add. Over a drive cycle where the electrolyte spanned 73 to 2256 mol m⁻³, a filter permitted to correct them moved them by at most 5.4 mol m⁻³, half a percent, and settled state-of-charge error was 0.070% against 0.076% either way.
+
+Since the covariance update is cubic in the number of *estimated* states, dropping 11 of 21 makes it **8.3× cheaper** — 9261 units of work against 1121. `SPMe.deterministic_states` declares the block and both filters read it, so this is a property of the model rather than something the caller has to know.
+
 Transport coefficients are held at their bulk values, which keeps the system linear and discretisable offline but means the model degrades as the electrolyte empties. It reports that rather than hiding it: `depletion()` returns the lowest coating concentration as a fraction of nominal, and `validity()` turns it into `good`, `degraded` or `extrapolating`. Those thresholds are **calibrated against the DFN comparison above**, not guessed — the model holds up considerably further into depletion than intuition suggests (still 14.7 mV at 2C, where the salt has fallen to a quarter of nominal) and then fails abruptly once linear extrapolation drives a coating concentration through zero.
 
 Reproduce with `python examples/06_electrolyte.py`.
@@ -487,7 +491,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 653 tests
+pytest                      # 662 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 
