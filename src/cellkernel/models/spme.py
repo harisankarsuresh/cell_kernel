@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from ..ocp import derivative_of
@@ -149,6 +151,42 @@ class SPMe(CellModel):
             self._kinetic_prefactor
             * (1.0 - parameters.transference_number)
             * parameters.thermodynamic_factor
+        )
+
+    @staticmethod
+    def reconcile(parameters: CellParameters, **kwargs) -> CellParameters:
+        """Remove the electrolyte from a lumped contact resistance.
+
+        The single easiest mistake to make with this model, and one made in its
+        own test suite before this existed. A parameter set fitted with a model
+        that did not resolve the electrolyte carries a contact resistance which
+        *already contains* the electrolyte loss. Hand it to ``SPMe``, which
+        computes that loss from geometry, and the same ohms are counted twice --
+        so the more detailed model performs worse than the simpler one it was
+        meant to improve on, and the symptom is a plausible voltage that is
+        merely too low.
+
+        This returns the same cell with ``contact_resistance`` reduced by the
+        electrolyte resistance the model computes, floored at zero.
+
+        Deliberately a function rather than a warning inside ``__init__``. The
+        two cases are not distinguishable from the numbers: a cell may
+        legitimately have more tab and current-collector resistance than
+        electrolyte resistance, and a check that fired on that would be wrong
+        often enough to be switched off, at which point it protects nobody.
+
+        >>> from cellkernel.params import chen2020_nmc811_graphite
+        >>> cell = chen2020_nmc811_graphite()
+        >>> tidy = SPMe.reconcile(cell)
+        >>> tidy.contact_resistance < cell.contact_resistance
+        True
+        """
+        probe = SPMe(parameters, **kwargs)
+        return replace(
+            parameters,
+            contact_resistance=max(
+                0.0, parameters.contact_resistance - probe.electrolyte_resistance
+            ),
         )
 
     # ------------------------------------------------------------------- shape

@@ -43,15 +43,24 @@ needs_data = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def cell():
-    """The literature parameter set, imported from PyBaMM where available."""
-    try:
-        import pybamm
+    """The literature parameter set, imported verbatim from PyBaMM.
 
-        from cellkernel.params import from_pybamm
+    Explicitly *not* falling back to the built-in set, which is the same physics
+    but carries a 10 mOhm lumped contact resistance standing in for losses
+    PyBaMM's Chen2020 does not include. Handing that to `SPMe`, which computes
+    the electrolyte from geometry, counts the electrolyte twice and makes it
+    perform worse than `SPM`.
 
-        return from_pybamm(pybamm.ParameterValues("Chen2020"))
-    except ImportError:
-        return chen2020_nmc811_graphite()
+    An earlier version of this fixture did fall back, and the resulting failure
+    -- only in the one CI job without PyBaMM installed -- is what surfaced the
+    trap. `SPMe` warns about it now.
+    """
+    pybamm = pytest.importorskip("pybamm", reason="needed for a verbatim parameter set")
+    from cellkernel.params import from_pybamm
+
+    imported = from_pybamm(pybamm.ParameterValues("Chen2020"))
+    assert imported.contact_resistance == 0.0, "expected no lumped resistance"
+    return imported
 
 
 @pytest.fixture(scope="module")
@@ -217,6 +226,33 @@ def test_resolving_the_electrolyte_helps_on_a_real_cell(cell, rate):
     assert with_electrolyte < without, (
         f"{segment.c_rate}C: {with_electrolyte:.1f} mV against {without:.1f} mV"
     )
+
+
+def test_a_lumped_contact_resistance_can_be_reconciled():
+    """The trap this suite fell into, and the helper that removes it.
+
+    The built-in set's 10 mOhm was fitted without an electrolyte model, so it
+    already contains the loss `SPMe` computes from geometry. Counting it twice
+    makes the more detailed model perform *worse* than the simpler one, and the
+    symptom is a plausible voltage that is merely too low. It surfaced in the one
+    CI job without PyBaMM installed, which fell back to this parameter set.
+    """
+    lumped = chen2020_nmc811_graphite()
+    assert lumped.contact_resistance > 0.0
+    probe = SPMe(lumped, dt=1.0, rom="pade", order=3)
+    tidy = SPMe.reconcile(lumped)
+    assert tidy.contact_resistance == pytest.approx(
+        lumped.contact_resistance - probe.electrolyte_resistance
+    )
+    assert SPMe.reconcile(tidy).contact_resistance >= 0.0
+
+
+def test_reconcile_floors_at_zero():
+    """A set whose entire resistance is electrolyte must not go negative."""
+    from dataclasses import replace
+
+    cell = replace(chen2020_nmc811_graphite(), contact_resistance=1e-4)
+    assert SPMe.reconcile(cell).contact_resistance == 0.0
 
 
 @needs_data

@@ -36,7 +36,9 @@ def build(kind: str, cell):
     if kind == "SPM":
         return SPM(cell, dt=1.0, rom="pade", order=3)
     if kind == "SPMe":
-        return SPMe(cell, dt=1.0, rom="pade", order=3, electrolyte_cells=(2, 1, 2))
+        # Reconciled: the built-in set's contact resistance was fitted without
+        # an electrolyte model and already contains that loss.
+        return SPMe(SPMe.reconcile(cell), dt=1.0, rom="pade", order=3, electrolyte_cells=(2, 1, 2))
     if kind == "ThermalSPM":
         return ThermalSPM(cell, dt=1.0, rom="pade", order=3)
     if kind == "ECM":
