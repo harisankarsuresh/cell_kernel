@@ -197,6 +197,29 @@ And the thermal model's premise is simply visible in the data: a 2C discharge he
 
 The dataset belongs to the [PyBOP](https://github.com/pybop-team/PyBOP) project and is not vendored here. Fetch it with `python -m cellkernel.data.reference`; tests that need it skip without it. Reproduce with `python examples/10_against_a_real_cell.py`.
 
+#### Fitting the rest, and what the data refused to tell us
+
+`cellkernel.identify` fits the kinetic and transport parameters the window fit cannot reach. Against all four discharge rates at once it takes the residual from 90 mV to **37 mV**.
+
+That is the boring half. The interesting half is the sensitivity column it prints alongside:
+
+| parameter | fitted | sensitivity |
+|---|---|---|
+| reaction rate, negative | ×0.25 | 0.026 |
+| reaction rate, positive | ×0.44 | 0.011 |
+| diffusivity, negative | ×0.77 | 0.016 |
+| diffusivity, positive | ×2.30 | 0.016 |
+| electrolyte diffusivity | ×0.28 | 0.000 |
+| **contact resistance** | **9.98 mΩ** | **1.000** |
+
+**Against constant-current discharge, the series resistance is the only thing the data determines.** Every physical parameter comes back a few percent as influential, and the correlation report catches the positive reaction rate trading against resistance at ρ = +0.95. So the fit is real and five of the six numbers are not.
+
+The reason is structural rather than statistical. A constant current is one steady excitation, and one excitation cannot separate an ohmic drop from a charge-transfer overpotential from a diffusion limitation — across a whole discharge all three look like a voltage that is lower than it should be. Separating them needs excitation with structure: pulses, an interrupted rest, impedance. Those distinguish the three by *timescale* rather than magnitude.
+
+A fitting routine that reported only the residual would have presented six confident numbers here. `IdentificationReport` reports sensitivity, cross-correlation, and which parameters ran into their bounds, because a parameter resting on a bound is the clearest possible statement that whatever came out of it is not a measurement.
+
+This is deliberately a few hundred lines of least squares, not a rival to [PyBOP](https://github.com/pybop-team/PyBOP) — which does this properly, with multiple optimisers, priors and real uncertainty quantification. Use PyBOP when the answer matters. Use this to get a parameter set good enough to generate an estimator from, plus an honest account of how far to trust it. Reproduce with `python examples/11_identify_from_data.py`.
+
 ### 5. Checked against somebody else's code
 
 Closed-form tests catch a great deal, but they cannot catch a misunderstanding shared between a model and the test written by the same person. So the models are also compared against [PyBaMM](https://github.com/pybamm-team/PyBaMM), on PyBaMM's own Chen2020 parameter set, started from *identical* stoichiometries so the comparison measures the physics rather than each package's state-of-charge bookkeeping.
@@ -441,14 +464,14 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 - **Capacity retention is modelled as loss of active material** (flux scaling), not loss of lithium inventory. That makes it partially observable from pulse transients, which is correct for that mechanism and wrong for the other. Distinguishing them needs a second parameter.
 - **The modelled cycle count is optimistic by about 2.5×, and instructions are not cycles.** `estimate_budget` reports 1,979 cycles per step; measured on an emulated Cortex-M4F the same code retires 5,086 instructions. And QEMU models no pipeline, no flash wait states and no memory system, so real silicon will take at least that many cycles and generally more. Use `cellkernel measure` and treat the modelled figure as a lower bound for early sizing only.
 - **No measurement on real silicon.** Everything above comes from a cross-compiler and an emulator. Neither models a flash accelerator, a cache, or contention with the rest of a firmware image.
-- **Literature parameters do not describe your cell.** 41.5 mV on the open-circuit curve of a real LG M50 and around 65 mV under load after calibration. Fitting the stoichiometry window recovers most of the static error; the rest is kinetics and transport, which this package provides no tools to identify — use [PyBOP](https://github.com/pybop-team/PyBOP) for that. Treat every millivolt-level claim here as being about implementation fidelity, not predictive accuracy.
+- **Literature parameters do not describe your cell, and constant-current data will not fix that.** 41.5 mV on the open-circuit curve of a real LG M50, down to 37 mV under load after fitting everything fittable. But the sensitivity analysis says only the series resistance was actually identified — the physical parameters are unconstrained by discharge curves and need pulse or impedance data, which `cellkernel.identify` does not currently support. Treat every millivolt-level claim here as being about implementation fidelity, not predictive accuracy.
 - **The thermal parameters are placeholders.** Lumped heat-transfer coefficient and surface area in the built-in sets are not fitted to anything. Measured self-heating on a real cell is 33 K at 2C; the model will not reproduce that until those two numbers are identified from data.
 - **A ~2.5 mV residual against PyBaMM remains unexplained.** Down from 23 mV once three bridge defects were fixed, and it now responds to refinement rather than being a fixed offset — but it plateaus rather than vanishing, so some difference between the two implementations is still there.
 
 ## Testing
 
 ```bash
-pytest                      # 624 tests
+pytest                      # 637 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 
