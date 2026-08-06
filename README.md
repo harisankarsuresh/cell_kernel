@@ -193,10 +193,15 @@ Against a measured LG M50 rate test, with the Chen2020 literature parameters tha
 |---|---|
 | our SPM vs **PyBaMM's SPM** | **0.26 mV** |
 | our SPM vs **a real LG M50**, open-circuit only | **41.5 mV** |
+| our SPM vs a real LG M50, **pulse response** | **4.6 mV** |
 | our SPM vs a real LG M50, 1C discharge | 111 mV |
 | our SPMe vs a real LG M50, 2C discharge | 63 mV |
 
-**Those two top rows measure different things and both are true.** 0.26 mV says the code implements the equations correctly. 41.5 mV says the parameters belong to a different unit — a different sample of the same design, differently formed, differently aged. Only the second number limits what you can predict about *your* cell, and a project that reported only the first would be misleading about what it is for.
+**Those top rows measure different things and all are true.** 0.26 mV says the code implements the equations correctly. 41.5 mV says the parameters belong to a different unit. Only the second kind limits what you can predict about *your* cell, and a project reporting only the first would be misleading about what it is for.
+
+The **4.6 mV pulse figure** is the one worth dwelling on, for two reasons. It is achieved with the stoichiometry window fitted and the series resistance anchored from the pulse edges, but with **no transport fitting at all** — solid diffusivities left at their literature values. And it sits below the ~10 mV that six nominally identical cells differ from each other by, so it is about as close as a single-cell comparison can meaningfully get.
+
+It also arrived by an instructive route. The same model first scored **31 mV**, which read as a structural limitation and prompted a search for missing dynamics. All but 3 mV of it turned out to be two artefacts in how the cycler log was read: linear interpolation across a one-second gap that straddles the falling edge, and a one-sample skew between the current and voltage channels that produces records showing current at zero with the voltage still loaded. A model reading that current correctly predicts the recovered voltage and is scored 230 mV wrong for being right. The general lesson is the ordering — **check the measurement handling before reaching for a richer model**, because a richer model will absorb the artefact and you will never find it.
 
 Most of the open-circuit gap is recoverable. `fit_stoichiometry_window` re-solves how much of each electrode the cell actually uses — four numbers — and takes **41.5 mV down to 8.5 mV**. What it cannot touch is the part under load: after fitting, 1C is still 65 mV out, because that residual is kinetics and transport rather than electrode balance.
 
@@ -482,7 +487,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 649 tests
+pytest                      # 653 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 

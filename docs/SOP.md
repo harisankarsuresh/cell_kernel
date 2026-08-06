@@ -83,7 +83,7 @@ dependent:
 parameter set for this cell has essentially no series resistance at all, so this
 one measurement is worth more than everything the discharge fit produced.
 
-### 1.4 Run more than one cell, and find out what your ceiling is
+### 1.5 Run more than one cell, and find out what your ceiling is
 
 Six nominally identical cells from the reference dataset, same pulse, same
 temperature:
@@ -122,7 +122,36 @@ would have produced a confident and thoroughly misleading parameter set.
 Without T8 and T9 you are using literature values for another cell and should
 expect the parameter error in the table at the top of this document.
 
-### 1.3 Instrumentation minimums
+### 1.3 Distrust your own data handling before you distrust the model
+
+The most expensive error in this whole exercise was not in the physics. Against
+the reference pulses the model scored 31 mV, which looked like a structural
+limitation and prompted a hunt for missing dynamics. It was not. **All but 3 mV
+of it came from two artefacts in how the log was read**, and once they were
+handled the same model — with no additional fitting — came out at 4.6 mV.
+
+Both are generic to cycler data and worth checking in yours:
+
+- **Non-uniform logging.** The instrument ran at 10 Hz through the pulse and then
+  left a gap of about a second across the falling edge, which is exactly where
+  the voltage jumps a quarter of a volt. Resampling onto a uniform grid puts
+  points inside that gap, and linear interpolation across a step manufactures
+  values the cell never had. Resample **current** with a zero-order hold, never
+  interpolation, and mark any voltage sample that is interpolation rather than
+  measurement.
+- **Channel skew at transitions.** The current and voltage channels are recorded
+  about one sample apart, so at every edge there is a record showing current
+  already at zero with the voltage still at its loaded value. No cell does that.
+  A model reading that current correctly predicts the recovered voltage and is
+  scored 230 mV wrong for being right. **Discard one sample either side of every
+  current transition.**
+
+`PulseSegment.measured()` applies both. The general lesson is the ordering: when
+a model disagrees with measurement, look at the measurement handling *before*
+reaching for a richer model, because the richer model will absorb the artefact
+and you will never find it.
+
+### 1.4 Instrumentation minimums
 
 - Voltage: ≤ 1 mV resolution, ≤ 2 mV absolute accuracy. Your model can never be
   demonstrated better than this.
@@ -314,11 +343,12 @@ Recommended limits, with what this project actually achieved beside them.
 | OCV, 5–95% SoC, RMSE | **< 10 mV** | 8.5 mV after 3.2 |
 | OCV at the extremes | < 50 mV | 372 mV before fitting; the ends are always worst |
 | Series resistance from pulses | **within cell-to-cell scatter** | 6.2% scatter at 25 °C |
+| **Pulse response, RMSE** | **< 10 mV** | **4.6 mV**, no transport fitting |
 | Rate test, held out, RMSE | **< 25 mV** to 2C | 37 mV fitting CC only |
 | Capacity | **< 1%** | 0.03% with capacity pinned |
 | Temperature rise | < 20% of the rise | — (needs T11) |
 
-> **Do not set these tighter than section 1.4.** Six identical cells scatter 6%
+> **Do not set these tighter than section 1.5.** Six identical cells scatter 6%
 > in series resistance, which is about 10 mV at 5 A. A voltage target below that
 > is unreachable in any transferable sense no matter how good the model is, and
 > pursuing it produces a parameter set fitted to one cell's individuality.

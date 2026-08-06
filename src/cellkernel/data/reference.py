@@ -233,6 +233,28 @@ class PulseSegment:
     #: trend across temperature is confounded with cell-to-cell scatter, which on
     #: this dataset is 6% of the series resistance.
     cell_name: str = ""
+    #: ``False`` where the uniform grid falls inside a gap in the source log, so
+    #: the voltage there is interpolation rather than measurement. See
+    #: :meth:`measured`.
+    valid: np.ndarray | None = None
+
+    def measured(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """``(time, current, voltage)`` with fabricated samples removed.
+
+        The logger does not sample uniformly: it runs at 10 Hz through the pulse
+        and then leaves a gap of about a second across the falling edge, which is
+        exactly where the voltage jumps by a quarter of a volt. Resampling onto a
+        uniform grid puts points inside that gap, and linear interpolation across
+        a step produces values the cell never had.
+
+        This is not a small effect. Comparing a model against the interpolated
+        series gave a 31 mV residual, of which *all but 3 mV* came from a single
+        fabricated sample at the falling edge -- the model was being scored
+        against an artefact of the resampling. Use this method for anything that
+        compares against measurement.
+        """
+        keep = np.ones(self.time.size, dtype=bool) if self.valid is None else self.valid
+        return self.time[keep], self.current[keep], self.voltage[keep]
 
     @property
     def series_resistance(self) -> float:
@@ -339,18 +361,54 @@ def load_pulse(
     # a discharge pulse is handled here, so the rested value is the maximum.
     rest_voltage = float(np.max(voltage[: first + 1]))
 
-    span = time[first:] - time[first]
-    order = np.argsort(span)
-    span, ordered = span[order], order
+    order = np.argsort(time[first:] - time[first])
+    span = (time[first:] - time[first])[order]
+    source_current = current[first:][order]
+    source_voltage = voltage[first:][order]
     grid = np.arange(0.0, span[-1] + dt, dt)
+
+    # Current is held, not interpolated. It is piecewise constant in the
+    # experiment and piecewise constant in the model's zero-order-hold
+    # discretisation, so interpolating it would invent a ramp that neither has.
+    held = np.searchsorted(span, grid, side="right") - 1
+    resampled_current = source_current[np.clip(held, 0, source_current.size - 1)]
+
+    # A grid point counts as measured only if a real sample sits within half a
+    # step of it. Anything else is interpolation, and interpolation is not safe
+    # here: the logger runs at 10 Hz through the pulse and then leaves about a
+    # second across the falling edge, which is exactly where the voltage jumps a
+    # quarter of a volt. A criterion based on gap *length* is not enough -- it
+    # was tried, and still let the edge through on four levels out of seven,
+    # because what matters is proximity to a sample rather than the size of the
+    # hole.
+    nearest = np.searchsorted(span, grid)
+    left = span[np.clip(nearest - 1, 0, span.size - 1)]
+    right = span[np.clip(nearest, 0, span.size - 1)]
+    distance = np.minimum(np.abs(grid - left), np.abs(right - grid))
+    valid = distance <= 0.5 * dt
+
+    # And the logger's two channels are skewed by about a sample at every
+    # transition: at the falling edge there is a record with the current already
+    # at zero and the voltage still at its loaded value, which is not something a
+    # cell can do. A model reading that current predicts the recovered voltage
+    # and is scored 230 mV wrong for being right. One source sample either side
+    # of each edge is therefore discarded -- the same defect handled for the
+    # rising edge when picking the rested voltage.
+    edges = np.flatnonzero(np.abs(np.diff(source_current)) > 0.05)
+    for index in edges:
+        lower = span[max(0, index - 1)]
+        upper = span[min(span.size - 1, index + 2)]
+        valid &= ~((grid >= lower - 0.5 * dt) & (grid <= upper + 0.5 * dt))
+
     return PulseSegment(
         time=grid,
-        current=np.interp(grid, span, current[first:][ordered]),
-        voltage=np.interp(grid, span, voltage[first:][ordered]),
+        current=resampled_current,
+        voltage=np.interp(grid, span, source_voltage),
         rest_voltage=rest_voltage,
         ambient=AMBIENTS[ambient],
         level=level,
         cell_name=cell_name,
+        valid=valid,
     )
 
 

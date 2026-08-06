@@ -220,6 +220,87 @@ def test_cell_to_cell_scatter_is_the_floor_on_any_fit():
 
 
 @needs_data
+def test_resampling_marks_what_it_invented():
+    """The uniform grid is finer than the log in places, and says where."""
+    pulse = reference.load_pulse("T25", "SoC5", dt=0.1)
+    assert pulse.valid is not None
+    assert pulse.valid.any() and not pulse.valid.all()
+    time, current, voltage = pulse.measured()
+    assert time.size == current.size == voltage.size < pulse.time.size
+
+
+@needs_data
+def test_current_is_held_rather_than_interpolated():
+    """It is piecewise constant in the experiment and in the discretisation.
+
+    Interpolating it would invent a ramp that neither has.
+    """
+    pulse = reference.load_pulse("T25", "SoC5", dt=0.1)
+    peak = float(np.max(pulse.current))
+    # Every sample sits at one level or the other, never partway. The cycler puts
+    # a few milliamps of noise on the plateau, so the test is for the absence of
+    # intermediate values rather than for exactly two distinct ones.
+    between = (pulse.current > 0.05 * peak) & (pulse.current < 0.95 * peak)
+    assert not between.any(), f"{int(between.sum())} samples on a fabricated ramp"
+
+
+@needs_data
+def test_samples_around_a_current_edge_are_discarded():
+    """The logger's two channels are skewed by about a sample at transitions.
+
+    At the falling edge there is a record with the current already at zero and
+    the voltage still at its loaded value, which no cell can do. A model reading
+    that current predicts the recovered voltage and is scored 230 mV wrong for
+    being right -- which is where all but 3 mV of an apparent model error came
+    from.
+    """
+    pulse = reference.load_pulse("T25", "SoC5", dt=0.1)
+    edge = int(np.argmax(np.abs(np.diff(pulse.current)))) + 1
+    window = slice(max(0, edge - 5), min(pulse.valid.size, edge + 15))
+    assert not pulse.valid[window].all(), "the edge neighbourhood must be excluded"
+
+
+@needs_data
+def test_the_model_matches_a_real_pulse_to_a_few_millivolt(cell, measured_capacity):
+    """The strongest agreement with measurement anywhere in this project.
+
+    Window fitted to the open-circuit curve, series resistance anchored from the
+    pulse edges, and *no transport fitting at all* -- solid diffusivities left at
+    their literature values. Under 10 mV on every pulse, which is at the
+    cell-to-cell scatter and therefore about as good as a single-cell comparison
+    can be.
+
+    It reads as a model result and is mostly a data-handling one: before the two
+    logger artefacts above were dealt with, the same model scored 31 mV.
+    """
+    from cellkernel.identify import anchor_series_resistance
+
+    soc, volts = reference.load_ocv()
+    tuned = fit_stoichiometry_window(cell, soc, volts, capacity=measured_capacity)
+    levels = [f"SoC{k}" for k in range(2, 9)]
+    pulses = [reference.load_pulse("T25", level, dt=0.1) for level in levels]
+
+    resistance = float(np.median([p.series_resistance for p in pulses]))
+
+    def build(params):
+        return SPM(params, dt=0.1, rom="pade", order=5)
+
+    anchored = anchor_series_resistance(tuned, build, resistance, current=7.5)
+    model = build(anchored)
+
+    errors = []
+    for pulse in pulses:
+        run = model.simulate(pulse.current, soc0=tuned.soc_from_ocv(pulse.rest_voltage))
+        residual = (run["voltage"] - pulse.voltage)[pulse.valid]
+        errors.append(float(np.sqrt(np.mean(residual**2))))
+        assert np.max(np.abs(residual)) < 0.020, (
+            f"{pulse.level}: worst {1e3 * np.max(np.abs(residual)):.1f} mV"
+        )
+    overall = 1e3 * float(np.sqrt(np.mean(np.square(errors))))
+    assert overall < 10.0, f"overall {overall:.2f} mV"
+
+
+@needs_data
 def test_unknown_pulse_conditions_are_rejected():
     with pytest.raises(ValueError, match="ambient"):
         reference.load_pulse("T99", "SoC5")
