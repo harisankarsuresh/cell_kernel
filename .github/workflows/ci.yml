@@ -94,6 +94,27 @@ jobs:
       - name: Report the figures
         run: python -m cellkernel.cli measure build/ci_arm --precision float --order 3
 
+  measured:
+    name: Checked against a real cell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" pybamm
+      # The dataset belongs to PyBOP and is fetched rather than vendored, so this
+      # job needs the network. It is separate for that reason: the rest of the
+      # suite must stay runnable offline.
+      - name: Fetch the measured LG M50 rate test
+        run: python -m cellkernel.data.reference
+      - name: Compare against measurement
+        run: python -m pytest tests/test_measured_cell.py -v
+      - name: Report the figures
+        run: python examples/10_against_a_real_cell.py
+
   coverage:
     name: Coverage does not regress
     runs-on: ubuntu-latest

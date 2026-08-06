@@ -6,7 +6,7 @@
 
 Cross-compiled for a Cortex-M4F at `-Os` and run on an emulated core, a 6-state single particle model with an extended Kalman filter costs **4.6 kB of flash, 168 bytes of RAM per cell, no static RAM at all, and 5,086 instructions per step**. Those are measured, not modelled — see below, because the modelled figures were wrong. The generated C agrees with the Python reference to **9e-16 V in double precision** and **7 µV in single precision**.
 
-The models are checked against [PyBaMM](https://github.com/pybamm-team/PyBaMM) rather than only against themselves — two independent implementations of the single particle model agree to **0.2 mV** at 0.5C. And the generated estimator answers the question a charger actually needs: `ck_max_charge_current` returns the fastest rate that will not plate lithium, in bounded time, on the microcontroller.
+The models are checked two ways that most of this ecosystem does not attempt. Against [PyBaMM](https://github.com/pybamm-team/PyBaMM), two independent implementations of the single particle model agree to **0.26 mV**. Against a **measured LG M50**, the same model with literature parameters is out by **41.5 mV** — and keeping those two numbers separate, rather than quoting only the first, is the point. The generated estimator also answers the question a charger actually needs: `ck_max_charge_current` returns the fastest rate that will not plate lithium, in bounded time, on the microcontroller.
 
 ```
 verification PASS  (double, 6 states, 900 samples, openloop, gcc)
@@ -172,7 +172,32 @@ V = U_p(x_p) + \eta_p - U_n(x_n) - \eta_n - I R_c
 
 The structural point: **the state dynamics are exactly linear.** Diffusion is linear in flux and flux is linear in current, so all nonlinearity lives in the voltage measurement. An extended Kalman filter on this model has *no linearisation error in its prediction step at all* — the usual complaint about EKFs does not apply, and the covariance propagation stays well behaved indefinitely.
 
-### 4. Checked against somebody else's code
+### 4. Checked against a real cell, which is the number that matters
+
+Everything else here compares code against mathematics or against another model. Those say the implementation is faithful. They cannot say the model describes a cell — and on that question the honest answer is much less flattering.
+
+Against a measured LG M50 rate test, with the Chen2020 literature parameters that describe exactly that cell design:
+
+| | error |
+|---|---|
+| our SPM vs **PyBaMM's SPM** | **0.26 mV** |
+| our SPM vs **a real LG M50**, open-circuit only | **41.5 mV** |
+| our SPM vs a real LG M50, 1C discharge | 111 mV |
+| our SPMe vs a real LG M50, 2C discharge | 63 mV |
+
+**Those two top rows measure different things and both are true.** 0.26 mV says the code implements the equations correctly. 41.5 mV says the parameters belong to a different unit — a different sample of the same design, differently formed, differently aged. Only the second number limits what you can predict about *your* cell, and a project that reported only the first would be misleading about what it is for.
+
+Most of the open-circuit gap is recoverable. `fit_stoichiometry_window` re-solves how much of each electrode the cell actually uses — four numbers — and takes **41.5 mV down to 8.5 mV**. What it cannot touch is the part under load: after fitting, 1C is still 65 mV out, because that residual is kinetics and transport rather than electrode balance.
+
+One trap is designed out rather than documented. Fitting the open-circuit curve with capacity left free is degenerate: the solver buys a better-looking curve by stretching the charge axis, and on this data it moved capacity by 10%, improved the open-circuit fit *further*, and made every discharge worse. Capacity is a residual in the fit, not a free parameter, and there is a test asserting the unconstrained version still misbehaves.
+
+The electrolyte work gets its best confirmation here, because nothing about it is circular. On the real cell at 2C, resolving the electrolyte takes the error from 153 mV to 63 mV — the same conclusion the Doyle–Fuller–Newman comparison reached, now against something that was actually measured.
+
+And the thermal model's premise is simply visible in the data: a 2C discharge heats this cell **33 K from room temperature and 42 K from freezing**. Colder is worse, because sluggish transport dissipates more.
+
+The dataset belongs to the [PyBOP](https://github.com/pybop-team/PyBOP) project and is not vendored here. Fetch it with `python -m cellkernel.data.reference`; tests that need it skip without it. Reproduce with `python examples/10_against_a_real_cell.py`.
+
+### 5. Checked against somebody else's code
 
 Closed-form tests catch a great deal, but they cannot catch a misunderstanding shared between a model and the test written by the same person. So the models are also compared against [PyBaMM](https://github.com/pybamm-team/PyBaMM), on PyBaMM's own Chen2020 parameter set, started from *identical* stoichiometries so the comparison measures the physics rather than each package's state-of-charge bookkeeping.
 
@@ -197,7 +222,7 @@ What remains is small and honestly labelled: refinement now *does* reduce the ga
 
 PyBaMM is an optional dependency; the comparison runs as its own CI job. Reproduce with `pip install pybamm && python examples/09_validate_against_pybamm.py`.
 
-### 5. When the electrolyte stops being a resistor
+### 6. When the electrolyte stops being a resistor
 
 `SPMe` resolves salt transport across the sandwich — negative coating, separator, positive coating — instead of lumping it into a fitted series resistance. It adds the electrolyte ohmic drop, computed from geometry and conductivity rather than fitted, and the concentration overpotential that builds as salt is driven from one coating to the other.
 
@@ -220,7 +245,7 @@ Transport coefficients are held at their bulk values, which keeps the system lin
 
 Reproduce with `python examples/06_electrolyte.py`.
 
-### 6. Temperature, when it cannot be ignored
+### 7. Temperature, when it cannot be ignored
 
 `ThermalSPM` adds cell temperature as a state: Bernardi heat generation, a lumped thermal node integrated exactly rather than by forward Euler, and Arrhenius feedback into both the kinetics and solid diffusion.
 
@@ -251,7 +276,7 @@ Reproduce with `python examples/05_thermal_coupling.py`.
 
 The schedule costs less than it sounds. Against the isothermal generator, on a 6-state model with a 9-point grid in single precision: **1.4× the flash and 2.3× the RAM** — 3.6 kB and 384 B — because the potential tables dominate flash and are shared across the grid. Blended coefficients are cached and rebuilt only when the measured temperature changes, which for a thermistor read far more slowly than the control loop means the cache usually hits. Generated C agrees with its NumPy mirror to 8.9e-16 V in double precision, including while temperature ramps across grid boundaries mid-run.
 
-### 7. Predicting ageing, not just tracking it
+### 8. Predicting ageing, not just tracking it
 
 `cellkernel.degradation` models the two mechanisms a graphite cell spends most of its life limited by. Interphase growth consumes cyclable lithium continuously and builds the film that throttles its own growth, so loss bends from linear to a square root within the first week. Lithium plating deposits metal instead of intercalating whenever the negative electrode potential falls below that of lithium metal.
 
@@ -290,7 +315,7 @@ cellkernel charge --temperature 263.15 313.15   # safe charge rate, by state of 
 cellkernel age --cycles 300                     # capacity fade, by temperature
 ```
 
-### 8. Charging as fast as the physics allows
+### 9. Charging as fast as the physics allows
 
 `cellkernel.protocols` inverts the plating criterion: given a state and a temperature, `plating_limited_current` returns the largest charging current that keeps the electrode a stated margin above the onset. Feeding that back as the setpoint gives a charge that is aggressive where it can be and cautious where it must be.
 
@@ -333,7 +358,7 @@ That closes the loop the package exists to close. The quantity that limits charg
 
 Reproduce with `python examples/08_fast_charge.py`.
 
-### 9. Estimators
+### 10. Estimators
 
 `EKF` (Joseph-form covariance, optional Gauss-Newton iteration), `UKF` (sigma points on the measurement only — for an affine map the unscented transform is exact, so propagating them through the linear process would compute the same numbers more slowly and *less* accurately), and `DualEKF` (adds capacity retention and resistance growth).
 
@@ -356,7 +381,7 @@ The iterated EKF beats the unscented filter here, for a fraction of the cost.
 
 The middle panel shows what a single linearised correction actually does when seeded 15% wrong: it drives the estimate *above 100%* state of charge and then takes the whole cycle to crawl back, ending worse than open-loop coulomb counting. That is the failure mode the table above quantifies, and it is the reason `iterations` defaults to more than one. Reproduce with `python examples/02_estimate_state_of_charge.py`.
 
-### 10. Code generation, and evidence
+### 11. Code generation, and evidence
 
 `generate()` emits `cellkernel_estimator.{h,c}` — no dynamic allocation, no global mutable state, fixed-size arrays, bounded execution time, worst case equal to typical case. It compiles under `-std=c99 -Wall -Wextra -Wpedantic -Werror` with no warnings.
 
@@ -416,12 +441,14 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 - **Capacity retention is modelled as loss of active material** (flux scaling), not loss of lithium inventory. That makes it partially observable from pulse transients, which is correct for that mechanism and wrong for the other. Distinguishing them needs a second parameter.
 - **The modelled cycle count is optimistic by about 2.5×, and instructions are not cycles.** `estimate_budget` reports 1,979 cycles per step; measured on an emulated Cortex-M4F the same code retires 5,086 instructions. And QEMU models no pipeline, no flash wait states and no memory system, so real silicon will take at least that many cycles and generally more. Use `cellkernel measure` and treat the modelled figure as a lower bound for early sizing only.
 - **No measurement on real silicon.** Everything above comes from a cross-compiler and an emulator. Neither models a flash accelerator, a cache, or contention with the rest of a firmware image.
+- **Literature parameters do not describe your cell.** 41.5 mV on the open-circuit curve of a real LG M50 and around 65 mV under load after calibration. Fitting the stoichiometry window recovers most of the static error; the rest is kinetics and transport, which this package provides no tools to identify — use [PyBOP](https://github.com/pybop-team/PyBOP) for that. Treat every millivolt-level claim here as being about implementation fidelity, not predictive accuracy.
+- **The thermal parameters are placeholders.** Lumped heat-transfer coefficient and surface area in the built-in sets are not fitted to anything. Measured self-heating on a real cell is 33 K at 2C; the model will not reproduce that until those two numbers are identified from data.
 - **A ~2.5 mV residual against PyBaMM remains unexplained.** Down from 23 mV once three bridge defects were fixed, and it now responds to refinement rather than being a fixed offset — but it plateaus rather than vanishing, so some difference between the two implementations is still there.
 
 ## Testing
 
 ```bash
-pytest                      # 602 tests
+pytest                      # 620 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 
@@ -445,7 +472,7 @@ Closed-form tests cannot catch a misunderstanding shared between a model and the
 pytest tests/test_pybamm_validation.py
 ```
 
-Sixteen CI jobs run on every push: the suite on three operating systems and three Python versions, linting, coverage with a floor, every example end to end, the PyBaMM comparison, and the generated C compiled by both gcc and clang under conversion and shadowing warnings and then run under the undefined-behaviour and address sanitisers.
+Seventeen CI jobs run on every push: the suite on three operating systems and three Python versions, linting, coverage with a floor, every example end to end, the PyBaMM comparison, the comparison against a measured cell, a cross-compile to Cortex-M with instruction counting under QEMU, and the generated C compiled by both gcc and clang under conversion and shadowing warnings and then run under the undefined-behaviour and address sanitisers.
 
 ## Citing
 

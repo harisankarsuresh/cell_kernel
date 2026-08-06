@@ -16,3 +16,6 @@ htmlcov/
 ck_harness
 _scratch_*
 .DS_Store
+
+# Measured reference data, fetched on demand and not ours to redistribute.
+_data/
