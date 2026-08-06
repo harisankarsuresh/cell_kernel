@@ -448,7 +448,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 620 tests
+pytest                      # 622 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 

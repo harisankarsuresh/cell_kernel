@@ -98,7 +98,6 @@ def download(cache: Path | str | None = None) -> Path:
     for url in (RATE_TEST_URL, OCV_URL):
         target = directory / url.rsplit("/", 1)[-1]
         if not target.exists():
-            urllib.request.urlopen(url, timeout=120)  # noqa: S310 - fixed https URL
             with urllib.request.urlopen(url, timeout=120) as response:  # noqa: S310
                 target.write_bytes(response.read())
     return directory

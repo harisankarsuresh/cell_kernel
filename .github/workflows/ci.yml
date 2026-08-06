@@ -126,6 +126,11 @@ jobs:
       - run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]" pytest-cov
+      # The measured-cell tests skip without the dataset, which would drop the
+      # reported coverage below the floor and blame the wrong thing. Fetch it so
+      # the number reflects what is actually exercised.
+      - name: Fetch the measured dataset
+        run: python -m cellkernel.data.reference
       # A floor, not a target. The point is that the command-line interface and
       # the cycler loader -- the two things anyone touches first -- do not drift
       # back to being untested, which is where they were.

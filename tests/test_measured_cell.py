@@ -103,6 +103,26 @@ def test_the_measured_capacity_is_close_to_nameplate(measured_capacity):
 
 
 @needs_data
+def test_download_is_a_no_op_when_the_files_are_present(tmp_path, monkeypatch):
+    """It must not reach the network on every run, only when something is missing."""
+
+    def refuse(*args, **kwargs):  # pragma: no cover - only runs on failure
+        raise AssertionError("download() tried to fetch an already-present file")
+
+    for name in ("LGM50_5Ah_RateTest.mat", "LGM50_5Ah_OCV.mat"):
+        (tmp_path / name).write_bytes(b"placeholder")
+    monkeypatch.setattr(reference.urllib.request, "urlopen", refuse)
+    assert reference.download(tmp_path) == tmp_path
+
+
+@needs_data
+def test_a_missing_dataset_says_how_to_get_it(tmp_path):
+    """Rather than a bare FileNotFoundError from somewhere inside scipy."""
+    with pytest.raises(FileNotFoundError, match="download"):
+        reference.load_ocv(cache=tmp_path)
+
+
+@needs_data
 def test_unknown_conditions_are_rejected():
     with pytest.raises(ValueError, match="ambient"):
         reference.load_discharge("T99", "cRate_1C")
