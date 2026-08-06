@@ -216,10 +216,17 @@ def identify(
         adjusts kinetics and transport, and will otherwise spend them
         compensating for an electrode balance that is simply wrong.
     segments
-        ``(name, current, voltage)`` triples, all sampled at the model's step.
-        Pass **several C-rates**. One rate cannot separate a resistance from a
-        reaction rate, because over a single current they produce the same
-        voltage offset; it takes two to tell them apart, and more to do it well.
+        ``(name, current, voltage)`` triples, or ``(name, current, voltage,
+        soc0)`` quadruples where each segment starts from its own state of
+        charge -- which pulses do, since each is taken at a different level.
+        All must be sampled at the model's step.
+
+        Pass **pulses if you have them**. Constant-current discharges, however
+        many rates, cannot separate an ohmic drop from a charge-transfer
+        overpotential from a diffusion limitation: over a whole discharge all
+        three look like a voltage that is too low, and the report will say as
+        much. A pulse separates them by timescale instead, which is a difference
+        of a hundredfold rather than a difference of degree.
     build
         Turns a parameter set into a model. Usually ``lambda p: SPM(p, dt=1.0)``.
     knobs
@@ -241,7 +248,12 @@ def identify(
     knobs = tuple(knobs)
 
     prepared = []
-    for name, current, voltage in segments:
+    for entry in segments:
+        if len(entry) == 4:
+            name, current, voltage, start = entry
+        else:
+            name, current, voltage = entry
+            start = soc0
         current = np.asarray(current, dtype=float).reshape(-1)
         voltage = np.asarray(voltage, dtype=float).reshape(-1)
         if current.size != voltage.size:
@@ -251,7 +263,7 @@ def identify(
         if indices.size == 0:
             raise ValueError(f"{name}: nothing above the voltage floor")
         step = max(1, indices.size // max_points)
-        prepared.append((name, current, voltage, indices[::step]))
+        prepared.append((name, current, voltage, indices[::step], float(start)))
 
     def rebuild(theta: np.ndarray) -> CellParameters:
         trial = cell
@@ -262,8 +274,8 @@ def identify(
     def residual(theta: np.ndarray) -> np.ndarray:
         model = build(rebuild(theta))
         chunks = []
-        for _name, current, voltage, sample in prepared:
-            run = model.simulate(current, soc0=soc0)
+        for _name, current, voltage, sample, start in prepared:
+            run = model.simulate(current, soc0=start)
             chunks.append(run["voltage"][sample] - voltage[sample])
         return np.concatenate(chunks)
 
@@ -328,8 +340,8 @@ def identify(
     fitted = rebuild(solved.x)
     model = build(fitted)
     per_segment = {}
-    for name, current, voltage, sample in prepared:
-        run = model.simulate(current, soc0=soc0)
+    for name, current, voltage, sample, start in prepared:
+        run = model.simulate(current, soc0=start)
         error = run["voltage"][sample] - voltage[sample]
         per_segment[name] = float(np.sqrt(np.mean(error**2)))
 

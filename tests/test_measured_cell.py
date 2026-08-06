@@ -118,8 +118,8 @@ def test_download_is_a_no_op_when_the_files_are_present(tmp_path, monkeypatch):
     def refuse(*args, **kwargs):  # pragma: no cover - only runs on failure
         raise AssertionError("download() tried to fetch an already-present file")
 
-    for name in ("LGM50_5Ah_RateTest.mat", "LGM50_5Ah_OCV.mat"):
-        (tmp_path / name).write_bytes(b"placeholder")
+    for url in (reference.RATE_TEST_URL, reference.OCV_URL, reference.PULSE_URL):
+        (tmp_path / url.rsplit("/", 1)[-1]).write_bytes(b"placeholder")
     monkeypatch.setattr(reference.urllib.request, "urlopen", refuse)
     assert reference.download(tmp_path) == tmp_path
 
@@ -129,6 +129,102 @@ def test_a_missing_dataset_says_how_to_get_it(tmp_path):
     """Rather than a bare FileNotFoundError from somewhere inside scipy."""
     with pytest.raises(FileNotFoundError, match="download"):
         reference.load_ocv(cache=tmp_path)
+
+
+@needs_data
+def test_pulse_data_covers_nine_levels_at_four_temperatures():
+    assert len(reference.available_pulses()) == 36
+
+
+@needs_data
+def test_a_pulse_resolves_its_own_leading_edge():
+    """Which is the entire point of running one.
+
+    The ohmic step and the diffusive sag differ by a hundredfold in timescale,
+    and separating them is what a constant-current discharge cannot do.
+    """
+    pulse = reference.load_pulse("T25", "SoC5", dt=0.1)
+    assert pulse.ohmic_step > 0.1, "expected a substantial instantaneous drop"
+    settled = pulse.voltage[: int(9.0 / 0.1)].min()
+    sag = pulse.voltage[0] - settled
+    assert 0.0 < sag < 0.5 * pulse.ohmic_step, "sag should be well below the step"
+
+
+@needs_data
+def test_the_rested_voltage_survives_a_late_current_sample():
+    """A real defect in the source, on one level out of nine.
+
+    The logger reports the current a sample after the voltage it caused, so the
+    sample immediately before the current edge is already under load. Taking it
+    as the rested value turned a 247 mV ohmic step into 2 mV and made the segment
+    silently useless. The rested value is the largest of the leading samples.
+    """
+    steps = [reference.load_pulse("T25", f"SoC{k}", dt=0.1).ohmic_step for k in range(2, 9)]
+    assert min(steps) > 0.15, f"one level still collapsed: {steps}"
+    assert max(steps) - min(steps) < 0.05, "steps should be similar across mid SoC"
+
+
+@needs_data
+def test_series_resistance_has_the_expected_shape():
+    """Flat through the middle, rising at both ends. Standard for this chemistry."""
+    values = [
+        reference.load_pulse("T25", f"SoC{k}", dt=0.1).series_resistance for k in range(1, 10)
+    ]
+    middle = values[2:8]
+    assert max(middle) - min(middle) < 0.2 * np.mean(middle), "middle should be flat"
+    assert values[0] > max(middle), "should rise at low charge"
+
+
+@needs_data
+def test_series_resistance_falls_with_temperature():
+    values = [
+        reference.load_pulse(ambient, "SoC5", dt=0.1).series_resistance
+        for ambient in ("T0", "T10", "T25", "T45")
+    ]
+    assert values == sorted(values, reverse=True)
+    assert values[0] > 1.4 * values[-1], "cold should cost substantially more"
+
+
+@needs_data
+def test_cells_are_indexed_by_position_not_by_the_datasets_numbering():
+    """Each ambient was run on a different six cells: 1-6 at 25 C, 19-24 at 0 C.
+
+    Indexing by the vendor's name works at 25 C and fails silently at the other
+    three, which is how this was found.
+    """
+    assert reference.load_pulse("T25", "SoC5", 1).cell_name == "Cell1"
+    assert reference.load_pulse("T0", "SoC5", 1).cell_name == "Cell19"
+    for ambient in ("T0", "T10", "T25", "T45"):
+        assert reference.load_pulse(ambient, "SoC5", 6).cell_name.startswith("Cell")
+    with pytest.raises(ValueError, match="cell_index"):
+        reference.load_pulse("T25", "SoC5", 7)
+
+
+@needs_data
+def test_cell_to_cell_scatter_is_the_floor_on_any_fit():
+    """The number that says how good a model can usefully be.
+
+    Six nominally identical cells differ by several percent in series resistance.
+    A model tuned to one of them starts out that far from the next, so chasing a
+    residual below that is fitting an individual cell's identity rather than
+    anything transferable.
+    """
+    values = np.array(
+        [
+            reference.load_pulse("T25", "SoC5", index, dt=0.1).series_resistance
+            for index in range(1, 7)
+        ]
+    )
+    scatter = float(values.std() / values.mean())
+    assert 0.02 < scatter < 0.15, f"scatter {100 * scatter:.1f}% is not as documented"
+
+
+@needs_data
+def test_unknown_pulse_conditions_are_rejected():
+    with pytest.raises(ValueError, match="ambient"):
+        reference.load_pulse("T99", "SoC5")
+    with pytest.raises(ValueError, match="level"):
+        reference.load_pulse("T25", "SoC42")
 
 
 @needs_data

@@ -66,6 +66,48 @@ transfer in milliseconds to seconds, diffusion in tens to hundreds of seconds.
 If you take one thing from this document: **fitting to discharge curves produces
 confident numbers that are not measurements.**
 
+A pulse also hands you one parameter with no fitting at all. On the reference
+cell a 1.5C pulse drops the terminal voltage 240 mV the instant it is applied and
+a further 35 mV over the next ten seconds; the first divided by the current is
+the series resistance, and it comes out with the shape it should — flat through
+the middle of the charge window and rising at both ends, and strongly temperature
+dependent:
+
+| SoC | 0 °C | 10 °C | 25 °C | 45 °C |
+|---|---|---|---|---|
+| 10% | 54.9 mΩ | 55.7 mΩ | 36.9 mΩ | 29.3 mΩ |
+| 50% | 42.0 mΩ | 36.2 mΩ | 31.5 mΩ | 27.0 mΩ |
+| 90% | 47.3 mΩ | 38.1 mΩ | 32.7 mΩ | 26.5 mΩ |
+
+`reference.load_pulse(...).series_resistance` does this. Note that the literature
+parameter set for this cell has essentially no series resistance at all, so this
+one measurement is worth more than everything the discharge fit produced.
+
+### 1.4 Run more than one cell, and find out what your ceiling is
+
+Six nominally identical cells from the reference dataset, same pulse, same
+temperature:
+
+| ambient | mean R₀ | spread | scatter |
+|---|---|---|---|
+| 0 °C | 43.0 mΩ | 41.9 – 45.8 mΩ | 3.0% |
+| 25 °C | 29.3 mΩ | 27.0 – 31.9 mΩ | **6.2%** |
+| 45 °C | 29.1 mΩ | 25.0 – 41.8 mΩ | 20.4% |
+
+**This is the floor on any accuracy target you set.** A model tuned to one of
+these cells begins 6% away from the next one off the same line. At 31 mΩ and 5 A
+that is around 10 mV — so a model matching a single cell to better than about
+10 mV is fitting that cell's individuality, not its chemistry, and will not
+transfer.
+
+Two consequences. Characterise at least three cells and fit to the median, or
+accept that your parameters describe one unit. And do not set an acceptance
+threshold below the scatter, however good your instrumentation is.
+
+The 45 °C row is also a reminder to look at the spread and not just the mean:
+one cell there reads 41.8 mΩ against a group average of 29. Fitting to that cell
+would have produced a confident and thoroughly misleading parameter set.
+
 ### 1.2 Worth having if you can
 
 | # | test | gives you |
@@ -247,10 +289,15 @@ Recommended limits, with what this project actually achieved beside them.
 |---|---|---|
 | OCV, 5–95% SoC, RMSE | **< 10 mV** | 8.5 mV after 3.2 |
 | OCV at the extremes | < 50 mV | 372 mV before fitting; the ends are always worst |
-| Pulse fit residual, RMSE | **< 15 mV** | — (needs T4 data) |
+| Series resistance from pulses | **within cell-to-cell scatter** | 6.2% scatter at 25 °C |
 | Rate test, held out, RMSE | **< 25 mV** to 2C | 37 mV fitting CC only |
 | Capacity | **< 1%** | 0.03% with capacity pinned |
 | Temperature rise | < 20% of the rise | — (needs T11) |
+
+> **Do not set these tighter than section 1.4.** Six identical cells scatter 6%
+> in series resistance, which is about 10 mV at 5 A. A voltage target below that
+> is unreachable in any transferable sense no matter how good the model is, and
+> pursuing it produces a parameter set fitted to one cell's individuality.
 
 If you cannot reach the OCV target, the problem is the OCP curves — get T8 done.
 If OCV is fine and the pulse residual is not, the problem is the model structure:
@@ -436,6 +483,9 @@ problem.
   the most expensive mistake available here.
 - **Accuracy better than your voltage sensor.** If the front end is ±2 mV, no
   amount of modelling demonstrates better than that.
+- **Accuracy better than the cells differ from each other.** Six identical cells
+  scatter 6% in series resistance here. Below roughly 10 mV you are modelling one
+  unit, not a design.
 - **A model valid outside the conditions you tested.** Particularly cold: a
   thermal design validated at 25 °C is not validated, since the same discharge
   heats the cell 27% more from freezing.
