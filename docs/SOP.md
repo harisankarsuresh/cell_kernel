@@ -235,10 +235,34 @@ contains* the electrolyte loss. `SPMe` computes that loss from geometry, so the
 same ohms get counted twice and the better model performs worse than the simpler
 one. This was caught in this project's own CI, inverting a result by 30 mV.
 
-### 3.4 Fit kinetics and transport to **T4**, not T3
+### 3.4 Anchor the series resistance before fitting anything else
 
 ```python
-report = identify(cell, pulse_segments, lambda p: SPM(p, dt=0.1), knobs=DEFAULT_KNOBS)
+measured = np.median([p.series_resistance for p in pulses])      # from T4 edges
+cell = anchor_series_resistance(cell, build, measured, current=7.5)
+```
+
+**Do this before 3.5, not as part of it.** The instantaneous voltage step is the
+one feature of the response that *every* parameter can imitate. Left free, the
+solver spends its whole budget reproducing it — and since a reaction rate and a
+resistance both move it, the two become interchangeable and everything slower
+gets whatever is left over.
+
+Measured on the reference cell: fitting transport to pulses with the resistance
+free left an 87 mV residual. Anchoring it first and fitting the same parameters
+to what remained gave **31 mV**, and the solid diffusivities went from swamped to
+being the best-determined quantities in the fit.
+
+What gets assigned is the *shortfall* — the measured resistance less whatever
+instantaneous drop the model already produces from its own kinetics. On the
+reference cell that was 31.8 mΩ measured against 15.6 mΩ intrinsic, so 16.2 mΩ of
+genuinely unmodelled resistance. Assigning the whole measured value would count
+charge transfer twice.
+
+### 3.5 Fit transport to the relaxation, using **T4** and not T3
+
+```python
+report = identify(cell, pulse_segments, lambda p: SPM(p, dt=0.1), knobs=TRANSPORT_KNOBS)
 print(report.summary())
 ```
 
@@ -256,7 +280,7 @@ information above ~0.1 Hz, and the zero-order-hold discretisation is exact for
 piecewise-constant current, so a 10 s step is 20× faster for a few percent on the
 fitted values. Use a fine step only for the sub-second part of pulses.
 
-### 3.5 Activation energies from T5
+### 3.6 Activation energies from T5
 
 ```python
 cell = cell.with_activation_energies(diffusion_negative=..., reaction_negative=...)
@@ -266,13 +290,13 @@ Deliberately never defaulted to a non-zero value: published values scatter widel
 and a default would be a guess wearing the clothes of a measurement. Typical
 range 20–50 kJ mol⁻¹.
 
-### 3.6 Thermal parameters from T11
+### 3.7 Thermal parameters from T11
 
 Fit `heat_transfer_coefficient` and `heat_capacity` to a measured temperature
 rise. For scale, the reference cell rises **33 K on a 2C discharge from 25 °C and
 42 K from 0 °C** — colder is worse, because sluggish transport dissipates more.
 
-### 3.7 Validate on T3, which you did not fit to
+### 3.8 Validate on T3, which you did not fit to
 
 Held-out validation. If the rate test error is much worse than the pulse-fit
 residual, the fit has absorbed something that does not generalise.
@@ -424,8 +448,9 @@ and generally more. Budget 2–3× the instruction count for a task period.
 | T1, T2, T3, T4, T5 complete | test reports |
 | Parameters traceable to a measurement or a cited source | parameter sheet |
 | Capacity pinned during the OCV fit | fit log |
+| Series resistance anchored from pulse edges before fitting | Stage 3.4 |
 | Sensitivity analysis reviewed; unidentified parameters listed | `report.summary()` |
-| Validation on held-out data | Stage 3.7 |
+| Validation on held-out data | Stage 3.8 |
 | Compared against an independent implementation | Stage 4.2 |
 | Three-leg verification passed | `cellkernel verify` |
 | Footprint and timing measured on the target architecture | `cellkernel measure` |

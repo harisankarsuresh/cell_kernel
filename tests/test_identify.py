@@ -18,6 +18,7 @@ import pytest
 from cellkernel.identify import (
     DEFAULT_KNOBS,
     KINETIC_KNOBS,
+    TRANSPORT_KNOBS,
     Knob,
     identify,
 )
@@ -172,6 +173,69 @@ def test_per_segment_errors_are_reported(cell):
     segments = synthesise(cell, c_rates=(0.5, 1.0, 2.0))
     report = identify(cell, segments, build, knobs=KINETIC_KNOBS, soc0=0.95)
     assert set(report.per_segment) == {"0.5C", "1.0C", "2.0C"}
+
+
+def test_anchoring_assigns_only_the_shortfall(cell):
+    """Not the whole measured resistance, which would count kinetics twice."""
+    from cellkernel.identify import anchor_series_resistance
+
+    bare = replace(cell, contact_resistance=0.0)
+    probe = build(bare)
+    rested = probe.initial_state(0.5)
+    intrinsic = (probe.voltage(rested, 0.0) - probe.voltage(rested, 5.0)) / 5.0
+    assert intrinsic > 0.0, "the model has some instantaneous drop of its own"
+
+    anchored = anchor_series_resistance(bare, build, 0.030, current=5.0)
+    assert anchored.contact_resistance == pytest.approx(0.030 - intrinsic, rel=1e-6)
+
+
+def test_anchoring_floors_at_zero(cell):
+    """A cell whose measured resistance is below the model's own drop."""
+    from cellkernel.identify import anchor_series_resistance
+
+    anchored = anchor_series_resistance(cell, build, 1e-6, current=5.0)
+    assert anchored.contact_resistance == 0.0
+
+
+def test_anchoring_validates_its_inputs(cell):
+    from cellkernel.identify import anchor_series_resistance
+
+    with pytest.raises(ValueError, match="current"):
+        anchor_series_resistance(cell, build, 0.03, current=0.0)
+    with pytest.raises(ValueError, match="measured_resistance"):
+        anchor_series_resistance(cell, build, -0.01, current=5.0)
+
+
+def test_anchoring_first_makes_transport_identifiable(cell):
+    """The staged procedure, checked on synthetic data where truth is known.
+
+    With the resistance free, the solver reproduces the instantaneous step -- the
+    one feature every parameter can imitate -- and leaves the slower behaviour to
+    whatever is left. Anchoring it removes that degree of freedom, and what
+    remains in the data is diffusion.
+    """
+    from cellkernel.identify import anchor_series_resistance
+
+    truth = replace(
+        cell,
+        contact_resistance=0.020,
+        negative=replace(cell.negative, diffusivity=cell.negative.diffusivity * 0.3),
+    )
+    segments = synthesise(truth, c_rates=(1.0, 2.0))
+
+    probe = build(truth)
+    rested = probe.initial_state(0.5)
+    measured = (probe.voltage(rested, 0.0) - probe.voltage(rested, 5.0)) / 5.0
+
+    start = replace(cell, contact_resistance=0.0)
+    anchored = anchor_series_resistance(start, build, measured, current=5.0)
+    assert anchored.contact_resistance == pytest.approx(0.020, abs=2e-3)
+
+    knobs = (TRANSPORT_KNOBS[0],)
+    loose = identify(start, segments, build, knobs=knobs, soc0=0.95)
+    tight = identify(anchored, segments, build, knobs=knobs, soc0=0.95)
+    assert tight.rmse_after < loose.rmse_after
+    assert 10.0 ** tight.values[0] == pytest.approx(0.3, rel=0.4)
 
 
 def test_the_fitted_cell_is_usable(cell):

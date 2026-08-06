@@ -482,7 +482,7 @@ Stated plainly, because a tool that hides these is worse than one that does not 
 ## Testing
 
 ```bash
-pytest                      # 645 tests
+pytest                      # 649 tests
 pytest -m "not compiler"    # skip tests needing a C compiler
 ```
 
