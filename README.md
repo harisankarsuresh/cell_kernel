@@ -23,6 +23,17 @@ verification PASS  (double, 6 states, 900 samples, openloop, gcc)
     generated C vs full Python model       6.120e-05 V  (0.061 mV)
 ```
 
+## Bringing your own cell
+
+[**docs/SOP.md**](docs/SOP.md) is the working procedure: which characterisation
+tests to run, which parameter comes from which measurement, what order to
+calibrate in and why the order matters, what error to accept at each stage, and
+how to get from there to a C estimator you can defend in a design review. Every
+"achievable" figure in it was measured during this project.
+
+`examples/12_new_cell_walkthrough.py` runs the whole thing against a real cell
+and prints the acceptance check after each stage — including the failures.
+
 ## Why this exists
 
 The open-source battery modelling ecosystem is strong and getting stronger. [PyBaMM](https://github.com/pybamm-team/PyBaMM) simulates continuum models beautifully. [PyBOP](https://github.com/pybop-team/PyBOP) identifies their parameters. [cellpy](https://github.com/jepegit/cellpy) and [BEEP](https://github.com/TRI-AMDD/beep) read cycler files. All of them stop at the Python boundary.
