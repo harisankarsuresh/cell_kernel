@@ -1,0 +1,26 @@
+6 states, float precision
+
+          target   opt     flash      code    tables
+  --------------------------------------------------
+      cortex-m4f   -Os     4636 B     2124 B     2512 B
+      cortex-m4f   -O2     5492 B     2980 B     2512 B
+   cortex-m0plus   -Os     4820 B     2308 B     2512 B
+   cortex-m0plus   -O2     5588 B     3076 B     2512 B
+
+  tables: modelled 2584 B, measured 2512 B (+2.9%)
+
+  Measured by cross-compiling and reading the object file's sections,
+  which is the accounting a firmware engineer does. Code is roughly as
+  large as the tables it reads, so a flash figure counting only tables --
+  which is what the modelled budget reports -- is short by about half.
+  The Cortex-M0+ row is the honest answer to whether this runs on a part
+  without an FPU: it does, and every float becomes a library call.
+
+  Instructions retired per filter step, on an emulated Cortex-M4:
+     -Os  5,086 instructions   (modelled 1,979 cycles)
+     -O2  5,201 instructions   (modelled 1,979 cycles)
+
+  Instructions, not cycles: QEMU models no pipeline, no flash wait
+  states and no memory system, so real silicon will take at least this
+  many and generally more. The modelled figure alongside is lower still,
+  which is worth knowing before sizing a task period from it.

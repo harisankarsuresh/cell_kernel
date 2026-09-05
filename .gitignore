@@ -19,3 +19,8 @@ _scratch_*
 
 # Measured reference data, fetched on demand and not ours to redistribute.
 _data/
+
+# Local notes and presentation drafts.
+/.private/
+/docs/PORTFOLIO.md
+/docs/assets/portfolio.png

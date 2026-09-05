@@ -521,6 +521,11 @@ def spec_from_spm(
     neg, pos = model.parameters.negative, model.parameters.positive
     ss_neg, ss_pos = model.ss_neg, model.ss_pos
     n_neg, n_pos = ss_neg.n_states, ss_pos.n_states
+    if model.n_states != n_neg + n_pos:
+        raise NotImplementedError(
+            "C export currently supports the isothermal SPM only. "
+            "SPMe electrolyte export is unfinished; use SPM or generate_scheduled for ThermalSPM."
+        )
     n = n_neg + n_pos
 
     A = np.zeros((n, n))

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "cellkernel_version": "0.2.0",
+  "numpy_version": "2.5.1",
+  "data_kind": "synthetic; same physical model generates and estimates voltage",
+  "cell": "nmc811-graphite-5Ah",
+  "dt_s": 1.0,
+  "duration_s": 1800.0,
+  "true_initial_soc_pct": 75,
+  "drive_seed": 0,
+  "voltage_noise_seed": 7,
+  "metric_window": "last 600 samples (10 minutes), before each model step",
+  "c_export": {
+    "precision": "float",
+    "states": 6,
+    "ram_per_instance_bytes": 168,
+    "predict_stack_bytes": 216,
+    "table_bytes": 2584,
+    "verification": "not run by this demo; use cellkernel verify",
+    "note": "C exports a single-update EKF; the demo uses three measurement iterations."
+  },
+  "scenarios": [
+    {
+      "id": "high",
+      "label": "Gauge starts too high",
+      "initial_soc_pct": 90.0,
+      "noise_mV": 1.0,
+      "initial_error_pp": 15.000000000000002,
+      "settled_rmse_pp": 0.1741085239973293,
+      "counting_rmse_pp": 15.000000000000123,
+      "final_error_pp": -0.42952249382768315
+    },
+    {
+      "id": "low",
+      "label": "Gauge starts too low",
+      "initial_soc_pct": 60.0,
+      "noise_mV": 1.0,
+      "initial_error_pp": -15.000000000000002,
+      "settled_rmse_pp": 0.2500947210587454,
+      "counting_rmse_pp": 14.999999999999883,
+      "final_error_pp": -0.5145200416439399
+    },
+    {
+      "id": "noisy",
+      "label": "Noisier voltage sensor",
+      "initial_soc_pct": 90.0,
+      "noise_mV": 10.0,
+      "initial_error_pp": 15.000000000000002,
+      "settled_rmse_pp": 0.9372839658551817,
+      "counting_rmse_pp": 15.000000000000123,
+      "final_error_pp": -1.3587995415054788
+    }
+  ]
+}

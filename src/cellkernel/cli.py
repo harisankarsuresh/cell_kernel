@@ -31,6 +31,51 @@ _CHEMISTRIES = {"nmc": chen2020_nmc811_graphite, "lfp": lfp_graphite}
 _ROMS = ("pade", "spectral", "fv", "poly")
 
 
+def _cmd_demo(args: argparse.Namespace) -> int:
+    from .demo import build_demo
+
+    report = build_demo(args.output)
+    path = (Path(args.output) / "index.html").resolve()
+    print(f"Demo ready: {path}")
+    print("Open index.html in your browser. No server or internet connection is needed.")
+    for scenario in report["scenarios"]:
+        print(
+            f"  {scenario['label']}: {scenario['settled_rmse_pp']:.3f} "
+            "percentage points RMSE (last 10 min)"
+        )
+    print("Synthetic data. C source generated; compiler verification is a separate command.")
+    if args.open:
+        import webbrowser
+
+        webbrowser.open(path.as_uri())
+    return 0
+
+
+def _cmd_benchmark(args: argparse.Namespace) -> int:
+    from .benchmark import run_benchmark
+
+    try:
+        report = run_benchmark(args.output, cache=args.data)
+    except FileNotFoundError:
+        print(
+            "Measured dataset missing. Fetch it with: python -m cellkernel.data.reference",
+            file=sys.stderr,
+        )
+        print(
+            "Then rerun benchmark, or point --data at the directory containing the .mat files.",
+            file=sys.stderr,
+        )
+        return 2
+    print("Measured LG M50 | 25 C | voltage RMSE in mV (lower is better)")
+    print(f"  {'split':<10} {'rate':<14} {'physics':>9} {'data-only':>10} {'hybrid':>9}")
+    for row in report["scores"]:
+        values = " ".join(f"{row[k]['rmse_mV']:>9.2f}" for k in ("physics", "data_only", "hybrid"))
+        print(f"  {row['split']:<10} {row['rate']:<14} {values}")
+    print(f"\nFull scores, assumptions and data hashes: {Path(args.output) / 'metrics.json'}")
+    print("0.5C tests interpolation; 2C tests extrapolation. One cell, one temperature.")
+    return 0
+
+
 def _cell(name: str) -> CellParameters:
     try:
         return _CHEMISTRIES[name]()
@@ -408,12 +453,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cellkernel",
         description=(
-            "Physics-based lithium-ion state estimation, from reduced-order "
-            "electrochemistry to verified embedded C."
+            "Estimate battery charge, compare models with measured data, and generate C code. "
+            "Start with 'cellkernel demo --open'."
         ),
     )
     parser.add_argument("--version", action="version", version=f"cellkernel {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    demo = subparsers.add_parser("demo", help="create an interactive battery-charge demo")
+    demo.add_argument(
+        "output", nargs="?", default="build/demo", help="output directory (default: build/demo)"
+    )
+    demo.add_argument("--open", action="store_true", help="open the finished demo in your browser")
+    demo.set_defaults(func=_cmd_demo)
+
+    benchmark = subparsers.add_parser(
+        "benchmark", help="compare physics, ML and hybrid voltage predictions"
+    )
+    benchmark.add_argument("output", nargs="?", default="build/benchmark", help="output directory")
+    benchmark.add_argument(
+        "--data", default=None, help="directory containing the measured .mat files"
+    )
+    benchmark.set_defaults(func=_cmd_benchmark)
 
     roms = subparsers.add_parser("roms", help="compare diffusion reduced-order models")
     roms.add_argument("--chemistry", choices=sorted(_CHEMISTRIES), default="nmc")

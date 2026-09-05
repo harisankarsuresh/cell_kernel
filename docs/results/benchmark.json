@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "cellkernel_version": "0.2.0",
+  "numpy_version": "2.5.1",
+  "experiment": "Measured LG M50 voltage prediction; complete discharge curves held out",
+  "ambient_C": 25,
+  "sample_period_s": 10.0,
+  "capacity_Ah_from_training_curve": 4.944609255430866,
+  "calibration": "Separate 25 C pseudo-OCV record; capacity from 0.1C training discharge",
+  "train_rates": [
+    "cRate_0p1C",
+    "cRate_1C"
+  ],
+  "test_rates": [
+    "cRate_0p5C",
+    "cRate_2C"
+  ],
+  "weighting": "Equal weight per training curve; metrics use every sample per curve",
+  "features": [
+    "soc",
+    "soc_squared",
+    "current_A",
+    "current_times_soc",
+    "current_times_soc_squared"
+  ],
+  "models": {
+    "data_only": {
+      "alpha": 0.01,
+      "mean": [
+        0.5078915300381179,
+        0.33900930601386636,
+        2.749901621542768,
+        1.4140795788873748,
+        0.9446798820729487
+      ],
+      "scale": [
+        0.28470247580484265,
+        0.29799422820104265,
+        2.249997136701685,
+        1.5325076238412436,
+        1.3129403841424834
+      ],
+      "intercept": 3.56309443154853,
+      "coefficients": [
+        0.3737038330938509,
+        -0.0789255133503503,
+        -0.12169793416174365,
+        0.05412098982387584,
+        -0.035411870191954194
+      ]
+    },
+    "hybrid_residual": {
+      "alpha": 0.01,
+      "mean": [
+        0.5078915300381179,
+        0.33900930601386636,
+        2.749901621542768,
+        1.4140795788873748,
+        0.9446798820729487
+      ],
+      "scale": [
+        0.28470247580484265,
+        0.29799422820104265,
+        2.249997136701685,
+        1.5325076238412436,
+        1.3129403841424834
+      ],
+      "intercept": -0.0510562411471582,
+      "coefficients": [
+        0.05591354283308653,
+        -0.025875680368880917,
+        -0.01517778483564175,
+        0.02053591176059511,
+        -0.006738211458088953
+      ]
+    }
+  },
+  "sources": [
+    {
+      "url": "https://raw.githubusercontent.com/pybop-team/PyBOP/develop/examples/data/LG_M50_ECM/data/LGM50_5Ah_OCV.mat",
+      "sha256": "10cc15661354ed8f4f2b644ae2f5e2e2b78136f8f2847a84e4a120308b95b2e5"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/pybop-team/PyBOP/develop/examples/data/LG_M50_ECM/data/LGM50_5Ah_RateTest.mat",
+      "sha256": "8614d1292914ab0fcb944b0cedb07661b455afd16b5428cde63bbfed1062dc9a"
+    }
+  ],
+  "limitations": [
+    "One cell dataset at 25 C; no claim of generalisation to new cells or temperatures.",
+    "Known full initial charge; features use current-integrated model SoC, not measured SoC.",
+    "Isothermal physics ignores self-heating; error includes parameter and model mismatch.",
+    "Fixed feature set and alpha=0.01; no tuning on held-out curves or random sample split.",
+    "The 0.5C holdout interpolates between training rates; 2C extrapolates beyond them.",
+    "Resampled samples are correlated; sample count is not an independent experiment count.",
+    "ML corrects terminal voltage only; it is not exported to C or used for charge limits."
+  ],
+  "scores": [
+    {
+      "split": "train",
+      "rate": "cRate_0p1C",
+      "samples": 3562,
+      "physics": {
+        "rmse_mV": 65.46352011487606,
+        "mae_mV": 49.603276857960424,
+        "max_abs_mV": 388.9857015275537
+      },
+      "data_only": {
+        "rmse_mV": 73.761036540701,
+        "mae_mV": 39.883819066158686,
+        "max_abs_mV": 583.9793519636189
+      },
+      "hybrid": {
+        "rmse_mV": 27.123347963543445,
+        "mae_mV": 15.74642156405165,
+        "max_abs_mV": 268.752915276091
+      }
+    },
+    {
+      "split": "train",
+      "rate": "cRate_1C",
+      "samples": 346,
+      "physics": {
+        "rmse_mV": 73.26695509228185,
+        "mae_mV": 55.521795156396415,
+        "max_abs_mV": 306.22014883354075
+      },
+      "data_only": {
+        "rmse_mV": 61.14829688438157,
+        "mae_mV": 36.21032306373756,
+        "max_abs_mV": 387.13458359097433
+      },
+      "hybrid": {
+        "rmse_mV": 24.89107537376995,
+        "mae_mV": 17.204687097240686,
+        "max_abs_mV": 164.42397527162456
+      }
+    },
+    {
+      "split": "held_out",
+      "rate": "cRate_0p5C",
+      "samples": 699,
+      "physics": {
+        "rmse_mV": 70.48392538666278,
+        "mae_mV": 49.041077750920806,
+        "max_abs_mV": 387.9905764198748
+      },
+      "data_only": {
+        "rmse_mV": 72.86335069293601,
+        "mae_mV": 39.846310078133186,
+        "max_abs_mV": 503.65870100822764
+      },
+      "hybrid": {
+        "rmse_mV": 34.02118710664036,
+        "mae_mV": 18.05177179839386,
+        "max_abs_mV": 259.10838877649
+      }
+    },
+    {
+      "split": "held_out",
+      "rate": "cRate_2C",
+      "samples": 176,
+      "physics": {
+        "rmse_mV": 63.30351738328696,
+        "mae_mV": 49.42569284447816,
+        "max_abs_mV": 287.41480102016845
+      },
+      "data_only": {
+        "rmse_mV": 88.70982226366796,
+        "mae_mV": 71.27790068186484,
+        "max_abs_mV": 177.41228484030546
+      },
+      "hybrid": {
+        "rmse_mV": 95.79946430652318,
+        "mae_mV": 54.22723922240835,
+        "max_abs_mV": 466.13308358156405
+      }
+    }
+  ]
+}

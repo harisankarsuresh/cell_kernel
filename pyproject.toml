@@ -57,6 +57,7 @@ where = ["src"]
 # The bare-metal benchmark and its linker script ship with the package so that
 # `cellkernel measure` works from an installed wheel, not just a source checkout.
 cellkernel = [
+    "resources/*.html",
     "codegen/runtime/*.c",
     "codegen/runtime/*.h",
     "codegen/_arm_bench.c",

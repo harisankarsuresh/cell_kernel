@@ -7,7 +7,19 @@ onwards. Before then, minor versions may break the API.
 
 ## Unreleased
 
+### Added
+
+- An offline interactive `cellkernel demo` with three reproducible charge-estimation
+  scenarios, time inspection, CSV/JSON evidence and generated C sources.
+- A `cellkernel benchmark` comparison of physics, ridge regression and residual
+  learning on measured LG M50 data, with whole-curve holdouts and a leakage test.
+- A plain-language README, separate engineering reference, experiment report,
+  and reproducible comparison figure.
+
 ### Fixed
+
+- Reject unsupported SPMe C export explicitly instead of silently exporting only
+  its solid-electrode states.
 
 - **The filter prior no longer assumes every state carries the same units.** The
   isotropic floor in `suggest_initial_covariance` is scaled from the largest

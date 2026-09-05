@@ -1,526 +1,201 @@
 # cellkernel
 
-**Physics-based lithium-ion state estimation, from reduced-order electrochemistry to verified embedded C.**
+**Understand a battery. Estimate its charge. Turn the model into C.**
 
-`cellkernel` takes a physics-based cell model, wraps it in a Kalman filter, and emits a self-contained C99 estimator that runs on a battery-management microcontroller — then compiles that C, replays it against the Python original, and tells you exactly how far apart they are.
+A battery's remaining charge cannot be read directly from a sensor. Software
+has to estimate it from measurements such as voltage and current — and correct
+it when the starting estimate is wrong.
 
-Cross-compiled for a Cortex-M4F at `-Os` and run on an emulated core, a 6-state single particle model with an extended Kalman filter costs **4.6 kB of flash, 168 bytes of RAM per cell, no static RAM at all, and 5,086 instructions per step**. Those are measured, not modelled — see below, because the modelled figures were wrong. The generated C agrees with the Python reference to **9e-16 V in double precision** and **7 µV in single precision**.
+cellkernel is an open-source Python project for exploring that problem. It
+combines **battery physics, state estimation, a measured-data ML benchmark, and
+embedded C code generation**, with reproducible experiments at each stage.
 
-The models are checked two ways that most of this ecosystem does not attempt. Against [PyBaMM](https://github.com/pybamm-team/PyBaMM), two independent implementations of the single particle model agree to **0.26 mV**. Against a **measured LG M50**, the same model with literature parameters is out by **41.5 mV** — and keeping those two numbers separate, rather than quoting only the first, is the point. The generated estimator also answers the question a charger actually needs: `ck_max_charge_current` returns the fastest rate that will not plate lithium, in bounded time, on the microcontroller.
+**[Try the demo](#try-it-in-five-minutes) · [Physics + ML results](docs/BENCHMARK.md) · [Engineering details](docs/ENGINEERING.md) · [Use your own cell](docs/SOP.md)**
 
-```
-verification PASS  (double, 6 states, 900 samples, openloop, gcc)
+![cellkernel demo showing a battery gauge correcting an incorrect starting estimate](docs/assets/demo.png)
 
-  code generation fidelity
-    generated C vs NumPy mirror, voltage   8.882e-16 V
-    generated C vs NumPy mirror, SoC       0.000e+00
-    mirror vs table-backed model, voltage  3.997e-15 V
+## Start with a simple question
 
-  deliberate approximation
-    lookup table vs analytic fit, voltage  6.120e-05 V  (0.061 mV)
+**If a battery is 75% charged but its gauge says 90%, can the software recover?**
 
-  end to end
-    generated C vs full Python model       6.120e-05 V  (0.061 mV)
-```
+The interactive demo answers that using the actual Python model. Switch between
+a starting estimate that is too high, one that is too low, and a noisier voltage
+sensor. Inspect the charge estimate at any point in the drive, or download the
+underlying measurements and results.
 
-## Bringing your own cell
+In the default synthetic experiment, the estimator reduces a **15-percentage-point
+starting error to 0.17 percentage points RMS over the final ten minutes**.
+Simply counting current keeps the original 15-point error.
 
-[**docs/SOP.md**](docs/SOP.md) is the working procedure: which characterisation
-tests to run, which parameter comes from which measurement, what order to
-calibrate in and why the order matters, what error to accept at each stage, and
-how to get from there to a C estimator you can defend in a design review. Every
-"achievable" figure in it was measured during this project.
+This demonstrates recovery in simulation. The same model generates the synthetic
+measurements, so it does **not** establish accuracy on a real battery.
 
-`examples/12_new_cell_walkthrough.py` runs the whole thing against a real cell
-and prints the acceptance check after each stage — including the failures.
+## Try it in five minutes
 
-## Why this exists
-
-The open-source battery modelling ecosystem is strong and getting stronger. [PyBaMM](https://github.com/pybamm-team/PyBaMM) simulates continuum models beautifully. [PyBOP](https://github.com/pybop-team/PyBOP) identifies their parameters. [cellpy](https://github.com/jepegit/cellpy) and [BEEP](https://github.com/TRI-AMDD/beep) read cycler files. All of them stop at the Python boundary.
-
-But a battery-management unit does not run Python. Getting a physics-based estimator onto the microcontroller that actually controls a pack is, today, a hand translation: someone reads the equations, writes C, and hopes. That translation is where the errors go in, it is unverifiable after the fact, and it is the single biggest reason production systems still ship equivalent-circuit models with coulomb counting while the electrochemistry stays in a research notebook.
-
-`cellkernel` closes that gap and, just as importantly, *measures* it.
-
-## Install
+Use Python 3.10 or newer. Install from this repository so the new commands are
+available; no package-index release is assumed.
 
 ```bash
-pip install cellkernel            # runtime: numpy, scipy
-pip install cellkernel[dev]       # plus pytest, ruff, matplotlib
+git clone https://github.com/harisankarsuresh/cell_kernel.git
+cd cell_kernel
+python -m venv .venv
 ```
 
-Python 3.10 or newer. A C compiler (gcc or clang) is needed only to *verify* generated code, not to generate it.
+Activate the environment:
 
-## Five minutes
-
-Compare the reduced-order diffusion models against the exact solution of the sphere problem:
+```powershell
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+```
 
 ```bash
-cellkernel roms
+# macOS / Linux
+source .venv/bin/activate
 ```
 
-```
-  model          states       <=1e0       <=1e1       <=1e2
-  ---------------------------------------------------------
-  pade                3    2.12e-09    1.30e-04    1.06e-01
-  pade                5    3.82e-14    1.98e-10    5.72e-04
-  spectral            5    1.80e-05    1.39e-03    4.87e-02
-  fv                  5    4.41e-03    4.00e-02    4.33e-01
-  poly                2    2.10e-05    1.37e-02    2.56e-01
-```
-
-Generate an estimator, compile it, and check it:
+Then install and run:
 
 ```bash
-cellkernel verify build/estimator --precision float
+python -m pip install -e .
+cellkernel demo --open
 ```
 
-Ask how fast the cell can be charged at −10 °C without plating lithium, and what
-three hundred cycles will cost it at each temperature:
+The demo writes `build/demo/index.html` and opens it in your browser. It works
+offline after installation, with no web server, account, GPU, C compiler, or
+downloaded battery dataset. If the browser does not open, open that file manually.
 
-```bash
-cellkernel charge --temperature 263.15 298.15
-cellkernel age --cycles 300
-```
+If PowerShell blocks activation, run `.venv\Scripts\python.exe -m pip install -e .`
+and `.venv\Scripts\python.exe -m cellkernel.cli demo --open` instead.
 
-Or from Python:
+## What you can do
 
-```python
-from cellkernel.codegen import generate
-from cellkernel.data import synthetic_drive_cycle
-from cellkernel.estimators import EKF
-from cellkernel.models import SPM
-from cellkernel.params import chen2020_nmc811_graphite
-from cellkernel.verify import verify
-
-cell = chen2020_nmc811_graphite()
-model = SPM(cell, dt=1.0, rom="pade", order=3)
-
-# Filter a record.
-current = synthetic_drive_cycle(cell.nominal_capacity, duration=1800.0)
-truth = model.simulate(current, soc0=0.8)
-
-ekf = EKF(
-    model,
-    process_noise=EKF.suggest_process_noise(model, current_std=0.05),
-    measurement_noise=1e-6,
-    initial_covariance=EKF.suggest_initial_covariance(model, soc_std=0.1),
-    iterations=3,
-)
-ekf.initialise(0.65)                       # deliberately wrong by 15%
-result = ekf.run(current, truth["voltage"])
-
-# Ship it.
-project = generate(model, "build/estimator", precision="float")
-print(verify(project, model, current).summary())
-```
-
-## How it works
-
-Five layers, each usable alone.
-
-### 1. Solid diffusion, reduced
-
-Lithium diffusion in a spherical particle has the exact surface transfer function
-
-```math
-G(s) = \frac{R}{D} \cdot \frac{\sinh\xi}{\xi\cosh\xi - \sinh\xi},
-\qquad \xi = R\sqrt{s/D}
-```
-
-which factors into an integrator carrying the mass balance and an analytic remainder:
-
-```math
-G(s) = \frac{3}{Rs} \cdot \hat{H}\left(\frac{R^2 s}{D}\right),
-\qquad
-\hat{H}(a) = 1 + \frac{a}{15} - \frac{a^2}{525} + \frac{2a^3}{23625} - \cdots
-```
-
-Four families approximate it. All are delivered as discrete-time state-space systems, all keep the volume-averaged concentration as an exact state, and all are compared against closed-form results in the test suite:
-
-| Model | States | Character |
-|---|---|---|
-| `PadeDiffusion` | *k* | Best accuracy per state. Coefficients solved in exact rational arithmetic. |
-| `SpectralDiffusion` | *k*+1 | Diagonal state matrix, so the cheapest to evaluate. |
-| `FiniteVolumeDiffusion` | *k* | The only one that keeps a resolved interior profile. |
-| `PolynomialDiffusion` | 2 | Cheapest that still gets the steady-state surface offset exactly. |
-
-![Surface concentration response against the exact PDE](rom_comparison.png)
-
-The lower panel is the one that matters. A 6-state Padé model tracks the exact transfer function at machine precision out to $\omega R^2/D \approx 100$, roughly a 10 second timescale for this particle, while a 10-shell finite-volume discretisation is already at 0.1% error in the quasi-static limit — its error is set by spatial resolution, not by bandwidth, so it does not improve as the excitation slows. Reproduce with `python examples/01_compare_reduced_order_models.py`.
-
-Two details do most of the work:
-
-**Discretisation happens offline, by matrix exponential.** A hand-written embedded diffusion solver usually steps explicitly, which is stable only for $\Delta t \lt \Delta r^2 / 2D$ — for a 6 µm particle that is milliseconds, far below a battery-management task period. Exponentiating the generator once, at build time, makes the online update a single dense matrix-vector product that is *unconditionally stable and exact for piecewise-constant current*. All the hard numerics move to the host.
-
-**Padé coefficients are solved in exact rationals.** The Padé linear system is a Hankel matrix built from series coefficients spanning many orders of magnitude ($1$, $\tfrac1{15}$, $-\tfrac1{525}$, $\tfrac2{23625}$, $-\tfrac{37}{9095625}$, …). Solved in double precision it loses significant digits by order 5 and is unusable by order 8. Solved over `fractions.Fraction` it is exact at any order, and it happens once.
-
-### 2. Cell parameters that are actually consistent
-
-A parameter set is only physically meaningful if the electrodes are **charge balanced**: sweeping state of charge from 0 to 1 must move the same lithium out of one electrode as into the other. Quoting electrode loadings and stoichiometry limits independently — as data sheets and papers do — almost always leaves a percent-level imbalance, which then contaminates any transport parameter fitted against the same data.
-
-`balanced_stoichiometry_window` solves four unknowns against four constraints (both electrodes pass exactly the rated capacity; the open-circuit voltage hits both limits) as a bounded least-squares problem. The built-in sets come out balanced to machine precision:
-
-```
-nmc811-graphite-5Ah
-   usable neg 5.00000 Ah   pos 5.00000 Ah   balance err 0.00e+00
-   OCV(0)=2.50000  OCV(1)=4.20000
-```
-
-### 3. Cell models with exactly linear dynamics
-
-`SPM` is two particles with reduced-order diffusion and symmetric Butler-Volmer kinetics:
-
-```math
-V = U_p(x_p) + \eta_p - U_n(x_n) - \eta_n - I R_c
-```
-
-```math
-\eta_k = \frac{2RT}{F} \cdot \mathrm{asinh}\left(\frac{j_k}{2 i_{0,k}}\right)
-```
-
-`ECM` is the equivalent-circuit baseline it exists to displace, with each RC branch discretised exactly rather than by forward Euler.
-
-The structural point: **the state dynamics are exactly linear.** Diffusion is linear in flux and flux is linear in current, so all nonlinearity lives in the voltage measurement. An extended Kalman filter on this model has *no linearisation error in its prediction step at all* — the usual complaint about EKFs does not apply, and the covariance propagation stays well behaved indefinitely.
-
-### 4. Checked against a real cell, which is the number that matters
-
-Everything else here compares code against mathematics or against another model. Those say the implementation is faithful. They cannot say the model describes a cell — and on that question the honest answer is much less flattering.
-
-Against a measured LG M50 rate test, with the Chen2020 literature parameters that describe exactly that cell design:
-
-| | error |
+| You want to… | Start here |
 |---|---|
-| our SPM vs **PyBaMM's SPM** | **0.26 mV** |
-| our SPM vs **a real LG M50**, open-circuit only | **41.5 mV** |
-| our SPM vs a real LG M50, **pulse response** | **4.6 mV** |
-| our SPM vs a real LG M50, 1C discharge | 111 mV |
-| our SPMe vs a real LG M50, 2C discharge | 63 mV |
+| Watch a battery-charge estimate recover | `cellkernel demo --open` |
+| Compare physics, machine learning, and a hybrid on measured data | `cellkernel benchmark` — dataset setup below |
+| Generate a small C estimator | `cellkernel generate build/estimator --precision float` |
+| Compile the generated C and compare it with Python | `cellkernel verify build/verified --precision float` — needs gcc or clang |
+| Simulate a drive and export measurements | `cellkernel simulate --out drive.csv` |
+| Explore temperature-dependent charging limits | `cellkernel charge --temperature 263.15 298.15` — kelvin: −10 °C and 25 °C |
+| Calibrate the model for another battery | [Step-by-step cell procedure](docs/SOP.md) |
 
-**Those top rows measure different things and all are true.** 0.26 mV says the code implements the equations correctly. 41.5 mV says the parameters belong to a different unit. Only the second kind limits what you can predict about *your* cell, and a project reporting only the first would be misleading about what it is for.
+Run `cellkernel --help` or `cellkernel <command> --help` for options.
 
-The **4.6 mV pulse figure** is the one worth dwelling on, for two reasons. It is achieved with the stoichiometry window fitted and the series resistance anchored from the pulse edges, but with **no transport fitting at all** — solid diffusivities left at their literature values. And it sits below the ~10 mV that six nominally identical cells differ from each other by, so it is about as close as a single-cell comparison can meaningfully get.
+## Where machine learning helps — and where it doesn't
 
-It also arrived by an instructive route. The same model first scored **31 mV**, which read as a structural limitation and prompted a search for missing dynamics. All but 3 mV of it turned out to be two artefacts in how the cycler log was read: linear interpolation across a one-second gap that straddles the falling edge, and a one-sample skew between the current and voltage channels that produces records showing current at zero with the voltage still loaded. A model reading that current correctly predicts the recovered voltage and is scored 230 mV wrong for being right. The general lesson is the ordering — **check the measurement handling before reaching for a richer model**, because a richer model will absorb the artefact and you will never find it.
+The new benchmark compares three ways of predicting measured battery voltage:
 
-Most of the open-circuit gap is recoverable. `fit_stoichiometry_window` re-solves how much of each electrode the cell actually uses — four numbers — and takes **41.5 mV down to 8.5 mV**. What it cannot touch is the part under load: after fitting, 1C is still 65 mV out, because that residual is kinetics and transport rather than electrode balance.
+1. **Physics:** a small battery model calibrated using a separate slow-voltage record.
+2. **Data only:** ridge regression, a regularised linear model using current and charge-related features.
+3. **Hybrid:** the physical prediction plus a learned correction to its voltage error.
 
-One trap is designed out rather than documented. Fitting the open-circuit curve with capacity left free is degenerate: the solver buys a better-looking curve by stretching the charge axis, and on this data it moved capacity by 10%, improved the open-circuit fit *further*, and made every discharge worse. Capacity is a residual in the fit, not a free parameter, and there is a test asserting the unconstrained version still misbehaves.
+The regressions train on complete **0.1C and 1C discharge curves at 25 °C**.
+Complete 0.5C and 2C curves are reserved for testing. Neighbouring time samples
+are never randomly split between training and testing.
 
-The electrolyte work gets its best confirmation here, because nothing about it is circular. On the real cell at 2C, resolving the electrolyte takes the error from 153 mV to 63 mV — the same conclusion the Doyle–Fuller–Newman comparison reached, now against something that was actually measured.
+| Held-out discharge | Physics | Data only | Hybrid |
+|---|---:|---:|---:|
+| 0.5C: inside the training-rate range | 70.48 mV | 72.86 mV | **34.02 mV** |
+| 2C: above the training-rate range | **63.30 mV** | 88.71 mV | 95.80 mV |
 
-And the thermal model's premise is simply visible in the data: a 2C discharge heats this cell **33 K from room temperature and 42 K from freezing**. Colder is worse, because sluggish transport dissipates more.
+*Voltage RMSE; lower is better. One measured LG M50 dataset, at one ambient
+temperature. C-rate expresses current relative to capacity: 1C is 5 A for a 5 Ah cell.*
 
-The dataset belongs to the [PyBOP](https://github.com/pybop-team/PyBOP) project and is not vendored here. Fetch it with `python -m cellkernel.data.reference`; tests that need it skip without it. Reproduce with `python examples/10_against_a_real_cell.py`.
+The learned correction helps at 0.5C and hurts at 2C. **A better training fit
+does not guarantee a better prediction outside the training range.** Both results
+are part of the project, with saved predictions and data fingerprints.
 
-#### Fitting the rest, and what the data refused to tell us
-
-`cellkernel.identify` fits the kinetic and transport parameters the window fit cannot reach. Against all four discharge rates at once it takes the residual from 90 mV to **37 mV**.
-
-That is the boring half. The interesting half is the sensitivity column it prints alongside:
-
-| parameter | fitted | sensitivity |
-|---|---|---|
-| reaction rate, negative | ×0.25 | 0.026 |
-| reaction rate, positive | ×0.44 | 0.011 |
-| diffusivity, negative | ×0.77 | 0.016 |
-| diffusivity, positive | ×2.30 | 0.016 |
-| electrolyte diffusivity | ×0.28 | 0.000 |
-| **contact resistance** | **9.98 mΩ** | **1.000** |
-
-**Against constant-current discharge, the series resistance is the only thing the data determines.** Every physical parameter comes back a few percent as influential, and the correlation report catches the positive reaction rate trading against resistance at ρ = +0.95. So the fit is real and five of the six numbers are not.
-
-The reason is structural rather than statistical. A constant current is one steady excitation, and one excitation cannot separate an ohmic drop from a charge-transfer overpotential from a diffusion limitation — across a whole discharge all three look like a voltage that is lower than it should be. Separating them needs excitation with structure: pulses, an interrupted rest, impedance. Those distinguish the three by *timescale* rather than magnitude.
-
-A fitting routine that reported only the residual would have presented six confident numbers here. `IdentificationReport` reports sensitivity, cross-correlation, and which parameters ran into their bounds, because a parameter resting on a bound is the clearest possible statement that whatever came out of it is not a measurement.
-
-This is deliberately a few hundred lines of least squares, not a rival to [PyBOP](https://github.com/pybop-team/PyBOP) — which does this properly, with multiple optimisers, priors and real uncertainty quantification. Use PyBOP when the answer matters. Use this to get a parameter set good enough to generate an estimator from, plus an honest account of how far to trust it. Reproduce with `python examples/11_identify_from_data.py`.
-
-### 5. Checked against somebody else's code
-
-Closed-form tests catch a great deal, but they cannot catch a misunderstanding shared between a model and the test written by the same person. So the models are also compared against [PyBaMM](https://github.com/pybamm-team/PyBaMM), on PyBaMM's own Chen2020 parameter set, started from *identical* stoichiometries so the comparison measures the physics rather than each package's state-of-charge bookkeeping.
-
-| discharge | our SPM vs PyBaMM SPM | our SPM vs DFN | our SPMe vs DFN |
-|---|---|---|---|
-| 0.5C | **0.26 mV** | 25.6 mV | **3.2 mV** |
-| 1.0C | **0.83 mV** | 52.9 mV | **6.7 mV** |
-| 2.0C | **2.6 mV** | 132.2 mV | **14.7 mV** |
-| 3.0C | 5.5 mV | 330.0 mV | 141.3 mV |
-
-Two independent implementations of the same model agree to a quarter of a millivolt at 0.5C, which is about the strongest form this check can take. And a 17-state `SPMe` reproduces a full Doyle–Fuller–Newman solution — a discretised system of coupled PDEs — to **6.7 mV at 1C and 14.7 mV at 2C**, roughly an order of magnitude better than the single particle model it extends. At 3C the linear electrolyte gives up, as documented, and `validity()` says so before the voltage does.
-
-**This comparison paid for itself immediately.** Getting these numbers meant finding three defects that self-consistent testing could never have caught, all of them in the PyBaMM bridge and all of them silent:
-
-- The reaction rate was **hardcoded at 1e-6** rather than read, wrong by 1.5× on graphite and 5.3× on the oxide. It got there because PyBaMM's parameter functions return expression nodes rather than numbers, so `float()` raised and a bare fallback swallowed it. That one defect *was* the 23 mV I had previously written off as "a model difference, cause unidentified".
-- Electrolyte transport was not imported at all. The salt diffusivity in use was **2.8× PyBaMM's** — a default I had raised myself, earlier in this project, because the depletion it produced looked implausibly strong. It was not implausible; it was right, and the independent reference is what showed the intuition was wrong.
-- The float coercion issue above affected every callable parameter, not just kinetics, so the bridge would silently substitute defaults for anything PyBaMM expressed as a function.
-
-What remains is small and honestly labelled: refinement now *does* reduce the gap, which it did not before, but it plateaus around 2.5 mV at 2C rather than going to zero. A residual model difference of a couple of millivolt is still there, an order of magnitude below where it started and below what a measurement front end would resolve.
-
-`from_pybamm` re-solves the stoichiometry window rather than taking the published limits verbatim — those leave a percent-level charge imbalance that would otherwise be absorbed by whatever transport parameter is fitted next.
-
-PyBaMM is an optional dependency; the comparison runs as its own CI job. Reproduce with `pip install pybamm && python examples/09_validate_against_pybamm.py`.
-
-### 6. When the electrolyte stops being a resistor
-
-`SPMe` resolves salt transport across the sandwich — negative coating, separator, positive coating — instead of lumping it into a fitted series resistance. It adds the electrolyte ohmic drop, computed from geometry and conductivity rather than fitted, and the concentration overpotential that builds as salt is driven from one coating to the other.
-
-Below about 1C this buys nothing. A single particle model with a fitted resistance matches it to a few millivolts, has 6 states instead of 17, and is exactly linear. Use the simpler one.
-
-The reason it exists is that the electrolyte term is **not** a resistance. On a 2C step from rest:
-
-| time | concentration overpotential | as an equivalent resistance |
-|---|---|---|
-| 2 s | −4.5 mV | 0.45 mΩ |
-| 10 s | −18.7 mV | 1.87 mΩ |
-| 40 s | −51.3 mV | 5.13 mΩ |
-| 160 s | −80.1 mV | 8.01 mΩ |
-
-A fitted resistance has to pick one row of that table, and here the top and bottom differ by a factor of eighteen. Calibrate on a ten-second pulse and it badly under-predicts sustained discharge; calibrate on the settled value and it over-predicts every transient. Fitting harder does not help, because the thing being fitted has dynamics of its own — a timescale set by the sandwich thickness, not the particle.
-
-Salt is conserved exactly (the source integrates to zero by construction and the projection enforces it), the steady-state split is verified two independent ways — iterating the discretisation, and solving the singular continuous system with the mean pinned — and they agree to 1e-8. The state transition stays exactly linear, so this model keeps the property that makes an extended Kalman filter well behaved on it.
-
-**The electrolyte states do not belong in the Kalman filter, and leaving them out is what makes this model affordable.** They are driven by current alone, do not depend on the solid states, and start from a uniform profile that is known rather than estimated — so the salt concentration at any moment follows from the current history, and a voltage measurement has nothing to add. Over a drive cycle where the electrolyte spanned 73 to 2256 mol m⁻³, a filter permitted to correct them moved them by at most 5.4 mol m⁻³, half a percent, and settled state-of-charge error was 0.070% against 0.076% either way.
-
-Since the covariance update is cubic in the number of *estimated* states, dropping 11 of 21 makes it **8.3× cheaper** — 9261 units of work against 1121. `SPMe.deterministic_states` declares the block and both filters read it, so this is a property of the model rather than something the caller has to know.
-
-Transport coefficients are held at their bulk values, which keeps the system linear and discretisable offline but means the model degrades as the electrolyte empties. It reports that rather than hiding it: `depletion()` returns the lowest coating concentration as a fraction of nominal, and `validity()` turns it into `good`, `degraded` or `extrapolating`. Those thresholds are **calibrated against the DFN comparison above**, not guessed — the model holds up considerably further into depletion than intuition suggests (still 14.7 mV at 2C, where the salt has fallen to a quarter of nominal) and then fails abruptly once linear extrapolation drives a coating concentration through zero.
-
-Reproduce with `python examples/06_electrolyte.py`.
-
-### 7. Temperature, when it cannot be ignored
-
-`ThermalSPM` adds cell temperature as a state: Bernardi heat generation, a lumped thermal node integrated exactly rather than by forward Euler, and Arrhenius feedback into both the kinetics and solid diffusion.
-
-Whether that is worth its cost is a real question, so here is the measurement. Same 2C discharge, once self-heating and once held isothermal:
-
-| ambient | temperature rise | peak voltage difference |
-|---|---|---|
-| −15 °C | 27.1 K | **736 mV** |
-| 0 °C | 23.4 K | 288 mV |
-| 25 °C | 18.0 K | 101 mV |
-| 40 °C | 15.2 K | 60 mV |
-
-Diffusivity moves roughly fifty-fold from −20 °C to 60 °C. An isothermal model freezes that, and the error it makes is largest exactly where a physics-based model is most wanted — in the cold, where surface depletion sets the plating limit.
-
-The awkward part is that diffusivity enters through the matrix exponential, which a microcontroller cannot evaluate. So the matrices are precomputed across a temperature grid and blended online. **The blend is on the Arrhenius factor, not on temperature**, and that detail is worth more than it sounds: at a sample period short against the diffusion time constant the discrete matrix is close to $A \approx I + A_c(D)\Delta t$ with $A_c$ proportional to $D$, so the matrices are nearly affine in diffusivity, and diffusivity is exponential in $1/T$. Interpolating linearly in temperature fits a straight line through an exponential and is worst at the cold end. On a nine-point grid that costs **197 mV at −18 °C**; blending on the factor instead costs **1.8 mV**, for one extra exponential per electrode per step.
-
-| grid points | −18 °C | −3 °C | 22 °C | 47 °C |
-|---|---|---|---|---|
-| 5 | 5.55 mV | 0.13 mV | 0.21 mV | 0.28 mV |
-| 9 | 1.79 mV | 0.07 mV | 0.08 mV | 0.06 mV |
-| 17 | 0.58 mV | 0.02 mV | 0.03 mV | 0.02 mV |
-
-Activation energies are deliberately **not** shipped with the parameter sets — they are seldom reported alongside the transport properties they modify, and published values scatter widely enough that a default would be a guess wearing the clothes of a measurement. Supply them with `CellParameters.with_activation_energies`.
-
-Reproduce with `python examples/05_thermal_coupling.py`.
-
-`generate_scheduled()` emits this as embedded C, with one deliberate change: **temperature becomes an input rather than a state.** Any pack worth running a physics-based estimator on has thermistors, so temperature is a measurement, not an unknown. Treating it as one keeps the covariance the size it was, keeps heat generation and its poorly-identified thermal parameters out of the firmware entirely, and leaves the Kalman structure identical to the isothermal case — what is generated is the same estimator with temperature-dependent coefficients, not a differently shaped one. It is also the better estimate: temperature is only weakly observable from terminal voltage, so a filter that infers it loses to a thermistor costing a few cents.
-
-The schedule costs less than it sounds. Against the isothermal generator, on a 6-state model with a 9-point grid in single precision: **1.4× the flash and 2.3× the RAM** — 3.6 kB and 384 B — because the potential tables dominate flash and are shared across the grid. Blended coefficients are cached and rebuilt only when the measured temperature changes, which for a thermistor read far more slowly than the control loop means the cache usually hits. Generated C agrees with its NumPy mirror to 8.9e-16 V in double precision, including while temperature ramps across grid boundaries mid-run.
-
-### 8. Predicting ageing, not just tracking it
-
-`cellkernel.degradation` models the two mechanisms a graphite cell spends most of its life limited by. Interphase growth consumes cyclable lithium continuously and builds the film that throttles its own growth, so loss bends from linear to a square root within the first week. Lithium plating deposits metal instead of intercalating whenever the negative electrode potential falls below that of lithium metal.
-
-They are treated differently on purpose. Growth is integrated as a slow state. Plating is reported as a **margin in volts**, because what a controller needs from it is not a life prediction but an answer to "may I keep charging at this rate", now:
-
-| state of charge | 0.5C | 1.0C | 2.0C | 3.0C |
-|---|---|---|---|---|
-| 0.30 | +0.108 | +0.068 | +0.024 | +0.001 |
-| 0.60 | +0.082 | +0.047 | **−0.012** | **−0.043** |
-| 0.80 | +0.039 | +0.006 | **−0.032** | **−0.057** |
-| 0.95 | +0.028 | **−0.008** | **−0.054** | **−0.099** |
-
-Negative means depositing metal. This table is why fast charge tapers, and it is not the cell voltage or the bulk state of charge that sets it — it is the potential at the particle surface, which an equivalent circuit does not have and therefore cannot protect against.
-
-The result worth having is that **ageing is U-shaped in temperature**. Interphase growth is Arrhenius and worsens with heat; plating is driven by sluggish transport and worsens with cold. Over 300 cycles at 1C:
-
-| temperature | interphase loss | dead metal | retention | dominant |
-|---|---|---|---|---|
-| −10 °C | 1.3 mAh | 449 mAh | 0.910 | plating |
-| 10 °C | 4.5 mAh | 272 mAh | 0.945 | plating |
-| 25 °C | 8.9 mAh | 0 | **0.998** | interphase |
-| 55 °C | 23.1 mAh | 0 | 0.995 | interphase |
-
-Neither extreme is safe, for opposite reasons, and the optimum moves upward as charging gets faster. That is why thermal management targets a band rather than a ceiling. Both the U-shape and the attribution of each arm to the right mechanism are asserted as tests.
-
-Plating is modelled with Butler-Volmer rather than Tafel, which matters more than it sounds: a bare Tafel term has no reverse branch and predicts deposition at *every* potential including rest, which integrated over a month of storage plates out an entire cell. The two branches must cancel exactly at the onset. Plated and dead lithium are tracked as separate inventories for a similar reason — with one running total, stripping makes the same lithium available to strip again on the next sample.
-
-Parameters are representative, not fitted, and the module says so: reported interphase rate constants span several orders of magnitude because they absorb whatever the fit could not otherwise explain. The shape of the curve is meaningful; the number of years is not.
-
-Reproduce with `python examples/07_degradation.py`.
-
-Or from the command line, without writing any Python:
+Reproduce them:
 
 ```bash
-cellkernel charge --temperature 263.15 313.15   # safe charge rate, by state of charge
-cellkernel age --cycles 300                     # capacity fade, by temperature
+python -m cellkernel.data.reference
+cellkernel benchmark
 ```
 
-### 9. Charging as fast as the physics allows
+The first command downloads the external PyBOP dataset into `_data/`. The second
+writes `build/benchmark/metrics.json` and `predictions.csv`. Read the
+[experiment report](docs/BENCHMARK.md) for calibration, split, limitations, and
+the distinction between voltage prediction and charge estimation.
 
-`cellkernel.protocols` inverts the plating criterion: given a state and a temperature, `plating_limited_current` returns the largest charging current that keeps the electrode a stated margin above the onset. Feeding that back as the setpoint gives a charge that is aggressive where it can be and cautious where it must be.
+## From an experiment to embedded code
 
-The safe rate, in C:
+The core workflow is:
 
-| soc | −10 °C | 0 °C | 10 °C | 25 °C | 40 °C |
-|---|---|---|---|---|---|
-| 0.10 | 3.00 | 3.00 | 3.00 | 3.00 | 3.00 |
-| 0.50 | 0.53 | 0.85 | 1.34 | 2.49 | 3.00 |
-| 0.90 | 0.17 | 0.28 | 0.45 | 0.87 | 1.57 |
-
-A fixed-rate charger has to sit under the worst cell in that grid. Charging from 10% with two hours available:
-
-| | to 80% | min electrode potential | time spent plating |
-|---|---|---|---|
-| **−5 °C** CCCV 1C | 78 min | −8.1 mV | 8.9 min |
-| **−5 °C** CCCV 3C | 72 min | −46.7 mV | 12.3 min |
-| **−5 °C** plating-limited | 82 min | **+2.2 mV** | **0** |
-| **25 °C** CCCV 3C | 26 min | +2.8 mV | 0 |
-| **25 °C** plating-limited | 39 min | +8.4 mV | 0 |
-
-At −5 °C the conventional charge deposits metal at *every* rate offered, including 1C, for about ten minutes of each charge — and nothing in its terminal measurements tells it so. The guarded protocol gets to a comparable state of charge in a comparable time and never crosses the onset.
-
-At 25 °C the trade reverses: nothing plates and the guarded protocol is slower than simply charging at 3C. That is the honest cost of a guarantee — it is paid exactly when it was not needed. Whether it is worth paying depends on how much of the year the pack spends cold.
-
-**And it runs in the firmware.** The generated C exposes both:
-
-```c
-ck_real_t phi   = ck_plating_potential(&est, current);
-ck_real_t setpt = ck_max_charge_current(&est, 0.01f, CK_LIMIT_CEILING);
+```text
+Cell parameters + current → Python battery model → Charge estimator
+                                      ↓
+                            Generated C99 + memory budget
+                                      ↓
+                        Compile and replay against Python
 ```
 
-The potential costs nothing extra — `ck_voltage` already forms it as a sub-expression and discards it. The limiter is bisection over a fixed 24 steps, so execution time is constant and known: no convergence test, no loop that might not terminate. The generated bisection is **bit-identical** to its Python mirror, which is what a fixed iteration count with no tolerance test should give, and the plating potential agrees to 1e-12 V in double precision.
+The generated estimator has fixed-size arrays and no dynamic memory allocation.
+The default six-state, single-precision version needs **168 bytes per instance
+for its state and covariance**, plus stack and other firmware memory. That is
+data-structure accounting, not a measurement of total firmware RAM.
 
-The scheduled estimator exposes the same pair taking measured temperature, and that is the version that earns its keep — plating is a cold-weather failure, and the isothermal generator can only answer for the single point it was built at. At 70% state of charge the safe rate falls from 1.32C at 25 °C to 0.26C at −10 °C, a factor of five, and the embedded answer reproduces the full Python model's table to two decimal places.
+The same version cross-compiles to **4,636 bytes of flash on Cortex-M4F** at
+`-Os`, and uses **5,086 instructions per filter step in QEMU**. These are
+compiler and emulator measurements; timing on a physical board is still needed.
 
-One caveat the header now states rather than burying in a build log: `ck_plating_potential` reads the negative electrode's lookup table, so it inherits that table's error. Graphite tabulates badly — its stage transitions cost **4.95 mV at the default 257 points**, against 0.13 mV for the layered oxide opposite it. A 10 mV plating margin is therefore only twice the table error. `CK_OCP_ERROR_NEG` and `CK_OCP_ERROR_POS` are emitted so a margin can be sized against them; `--table-points 513` brings the negative electrode to 1.3 mV.
+Verification separates arithmetic differences in the generated code from the
+approximation introduced by voltage lookup tables. The [engineering reference](docs/ENGINEERING.md)
+explains those checks and independent PyBaMM comparisons. The current
+[verification record](docs/VALIDATION.md) includes the repeated ARM measurements.
 
-That closes the loop the package exists to close. The quantity that limits charging is not measurable at the terminals, so a controller either models it or guesses — and this is that model, compiled, on the microcontroller that sets the current.
+**Scope matters:** C export supports the basic single-particle model and a version
+that takes measured temperature. The electrolyte model's C export is unfinished
+and raises a clear error. The ML correction is an offline experiment, and the
+three-iteration Python demo is not the single-update generated C estimator.
 
-Reproduce with `python examples/08_fast_charge.py`.
+## What's inside
 
-### 10. Estimators
+| Area | What it demonstrates | Code |
+|---|---|---|
+| Battery modelling | Diffusion, voltage, electrolyte and temperature effects | [models](src/cellkernel/models), [reduced models](src/cellkernel/rom) |
+| State estimation | Correcting hidden battery states from noisy measurements | [estimators](src/cellkernel/estimators) |
+| Parameter fitting | Calibration and checking which parameters data can identify | [identify.py](src/cellkernel/identify.py) |
+| Applied ML | Baselines, curve-level holdouts, residual learning, failure analysis | [benchmark.py](src/cellkernel/benchmark.py) |
+| Embedded software | C generation, memory accounting and numerical verification | [codegen](src/cellkernel/codegen), [verify](src/cellkernel/verify) |
+| Reproducibility | Deterministic demos, exported results and automated checks | [demo.py](src/cellkernel/demo.py), [tests](tests) |
 
-`EKF` (Joseph-form covariance, optional Gauss-Newton iteration), `UKF` (sigma points on the measurement only — for an affine map the unscented transform is exact, so propagating them through the linear process would compute the same numbers more slowly and *less* accurately), and `DualEKF` (adds capacity retention and resistance growth).
+**Plain-language glossary:** state of charge (SoC) means remaining charge as a
+percentage; SPM is a simplified physical model of the two electrodes; EKF is an
+extended Kalman filter, which updates an estimate using noisy measurements;
+RMSE measures typical prediction error; a percentage point is the difference
+between two percentages, such as 90% − 75% = 15 points.
 
-Two things here are not decoration:
-
-**Priors are shaped, not isotropic.** "I do not know the state of charge" does not mean every state is independently uncertain — a rested cell has no concentration gradient however full it is. `suggest_initial_covariance` returns a rank-one covariance along the state-of-charge direction plus a small floor; `suggest_process_noise` places a rank-one term along the input column, because a mis-measured ampere cannot produce an arbitrary state disturbance. With an isotropic prior instead, corrections are absorbed by the gradient coordinates rather than the bulk concentration, and the filter fits the voltage while leaving its charge error untouched. In development this showed up as a 4% wander during an hour of rest — exactly when open-circuit voltage should be pinning the estimate down.
-
-**Iterating the measurement update matters more than the filter choice.** Seed a nickel-manganese-cobalt cell at 90% when it is really at 75%: the local `dOCV/dSOC` there is about 0.22 V, but the average slope across the gap is near 1.1 V. A single linearised correction therefore overshoots roughly fivefold and the estimate oscillates instead of settling. Measured on a 40-minute drive cycle:
-
-| Filter | Final state-of-charge error |
-|---|---|
-| EKF, 1 iteration | 0.241 — diverged |
-| EKF, 2 iterations | 0.004 |
-| EKF, 3 iterations | 0.0015 |
-| UKF | 0.0026 |
-
-The iterated EKF beats the unscented filter here, for a fraction of the cost.
-
-![State-of-charge estimation on a synthetic drive cycle](soc_estimation.png)
-
-The middle panel shows what a single linearised correction actually does when seeded 15% wrong: it drives the estimate *above 100%* state of charge and then takes the whole cycle to crawl back, ending worse than open-loop coulomb counting. That is the failure mode the table above quantifies, and it is the reason `iterations` defaults to more than one. Reproduce with `python examples/02_estimate_state_of_charge.py`.
-
-### 11. Code generation, and evidence
-
-`generate()` emits `cellkernel_estimator.{h,c}` — no dynamic allocation, no global mutable state, fixed-size arrays, bounded execution time, worst case equal to typical case. It compiles under `-std=c99 -Wall -Wextra -Wpedantic -Werror` with no warnings.
-
-The filter path contains no loop whose trip count depends on data. The one routine that iterates, `ck_max_charge_current`, does a fixed 24 bisection steps with no convergence test and no early exit, which costs it two or three wasted halvings and buys the same property: the time it takes does not depend on what the cell is doing. CI checks that the early exit has not crept back in. Alongside it come a host harness, a `Makefile`, a `CMakeLists.txt`, and a `BUDGET.txt`:
-
-```
-precision            float (4 bytes/word)
-states               6
-flash (tables)       2584 B
-RAM (per instance)   168 B
-stack (predict)      216 B
-arithmetic/step      564 mul, 522 add, 12 div, 6 sqrt, 2 log
-modelled cycles      1979
-estimated time       48 MHz: 41.2 us, 80 MHz: 24.7 us, 120 MHz: 16.5 us, 180 MHz: 11.0 us
-```
-
-`verify()` then compiles it and splits the error into three legs, because the aggregate number cannot tell you which one you are looking at:
-
-1. **Generated C against a NumPy mirror** with identical loop order and table evaluation. Any disagreement beyond round-off is a code-generation defect. This is the leg that validates the generator.
-2. **Mirror against a table-backed Python model.** Zero by construction; catches a mirror that has drifted.
-3. **Table-backed against the full analytic model.** The price of a lookup table — a modelling choice, reported in millivolts rather than left implicit.
-
-A 3 mV gap between generated C and a reference is unremarkable if it is table resolution and alarming if it is arithmetic. Separating the legs is what makes the difference visible. During development this immediately localised a 138 mV discrepancy to a lookup table whose domain was too narrow to cover surface excursion under load.
-
-### Measured, not modelled
-
-That `BUDGET.txt` is arithmetic on the emitted data structures. `cellkernel measure` cross-compiles for a real Cortex-M and reads the linker's own accounting:
-
-```
-        target   opt     flash      code    tables
-  --------------------------------------------------
-    cortex-m4f   -Os     4636 B     2124 B     2512 B
-    cortex-m4f   -O2     5492 B     2980 B     2512 B
- cortex-m0plus   -Os     4820 B     2308 B     2512 B
-
-  Instructions retired per filter step, on an emulated Cortex-M4:
-     -Os  5,086 instructions   (modelled 1,979 cycles)
-```
-
-**Two of those columns say the model was wrong.** The table count is good — within 3% of what the linker reports, which it should be, since it is exact arithmetic. But the budget reported *flash* as tables only, justified by a note claiming code was small beside them. Code is 2124 bytes against 2512 of tables, so the headline flash figure was short by 45%. And the modelled cycle count is optimistic by a factor of two and a half.
-
-The instruction count is itself measured rather than assumed twice over. Fixed startup cost is removed by differencing two step counts. The tick-to-instruction conversion is calibrated in the same run, by timing a block of exactly *n* assembler `nop`s at two values of *n* so the loop overhead cancels — that comes out at exactly 40 instructions per tick, agreeing with the board's documented 25 MHz, but agreeing with a datasheet is a check rather than a substitute. The first attempt at that calibration wrapped the nops in a C loop and came out three times low.
-
-Instructions are still not cycles: QEMU models no pipeline, no flash wait states and no memory system, so real silicon takes at least this many and generally more. `168 B` of RAM per cell is exact, and `.bss` and `.data` are both zero — the estimator has no globals, which is what makes one instance per cell in a pack safe.
-
-## Known limitations
-
-Stated plainly, because a tool that hides these is worse than one that does not exist.
-
-- **The thermal model is a single node.** One lumped node is what can actually be identified from a battery-management unit's own measurements, which are surface temperature at best. Radial gradients inside a cylindrical cell reach tens of kelvin at high rate and are not represented.
-- **Generated code takes temperature as an input, and does not estimate it.** `generate_scheduled()` emits an estimator valid across a temperature range, but it must be given a thermistor reading; the Python `ThermalSPM` can infer temperature from voltage, and that capability does not cross to C. This is a deliberate division rather than an omission — see below — but if you have no temperature sensor, the generated path is not for you.
-- **Temperature is weakly observable from voltage alone.** The filter infers it through its effect on polarisation, which is indirect and slow. Measured state-of-charge error on a cold 1.5C discharge settles near 3.5% with a temperature state against 0.15% for the isothermal model on a comparable run. If a thermistor is available, use it; a measured cell temperature is worth more than any amount of filter tuning here.
-- **The electrolyte model holds its transport coefficients constant.** Diffusivity, conductivity and transference number all vary appreciably across the concentration range a cell visits at high rate, and `SPMe` uses bulk values for all three — which is what keeps the system linear and discretisable offline. It reports the consequence rather than hiding it: `validity()` returns `good`, `degraded` or `extrapolating`, and on this cell 5C is already degraded.
-- **Degradation parameters are representative, not fitted.** Interphase rate constants in the literature span several orders of magnitude, because they absorb whatever the fitting procedure could not otherwise explain. The shape of the predicted curve is meaningful; the number of years is not. Loss of active material through particle cracking, transition-metal dissolution and positive-electrode side reactions are not modelled at all.
-- **The posterior covariance is optimistic at open circuit.** One voltage measurement cannot separate the two electrodes; there is a direction in state space that voltage never observes, and only current integration couples them. The reported standard deviation comes out several times smaller than the true error during long rests. This is asserted as a test rather than hidden, so it will be noticed when fixed.
-- **Lookup-table error is not uniform.** Worst-case interpolation error for the built-in graphite fit is 4.95 mV at 257 points, but it is confined entirely below 4% stoichiometry — the steep exponential rise, 3% of the table domain and below the operating window. Median error over the domain is 0.002 mV. Raise `table_points` if the extremes matter; `BUDGET.txt` reports the figure so the trade is explicit.
-- **Capacity retention is modelled as loss of active material** (flux scaling), not loss of lithium inventory. That makes it partially observable from pulse transients, which is correct for that mechanism and wrong for the other. Distinguishing them needs a second parameter.
-- **The modelled cycle count is optimistic by about 2.5×, and instructions are not cycles.** `estimate_budget` reports 1,979 cycles per step; measured on an emulated Cortex-M4F the same code retires 5,086 instructions. And QEMU models no pipeline, no flash wait states and no memory system, so real silicon will take at least that many cycles and generally more. Use `cellkernel measure` and treat the modelled figure as a lower bound for early sizing only.
-- **No measurement on real silicon.** Everything above comes from a cross-compiler and an emulator. Neither models a flash accelerator, a cache, or contention with the rest of a firmware image.
-- **Literature parameters do not describe your cell, and constant-current data will not fix that.** 41.5 mV on the open-circuit curve of a real LG M50, down to 37 mV under load after fitting everything fittable. But the sensitivity analysis says only the series resistance was actually identified — the physical parameters are unconstrained by discharge curves and need pulse or impedance data, which `cellkernel.identify` does not currently support. Treat every millivolt-level claim here as being about implementation fidelity, not predictive accuracy.
-- **The thermal parameters are placeholders.** Lumped heat-transfer coefficient and surface area in the built-in sets are not fitted to anything. Measured self-heating on a real cell is 33 K at 2C; the model will not reproduce that until those two numbers are identified from data.
-- **A ~2.5 mV residual against PyBaMM remains unexplained.** Down from 23 mV once three bridge defects were fixed, and it now responds to refinement rather than being a fixed offset — but it plateaus rather than vanishing, so some difference between the two implementations is still there.
-
-## Testing
+## Development and checks
 
 ```bash
-pytest                      # 662 tests
-pytest -m "not compiler"    # skip tests needing a C compiler
+python -m pip install -e ".[dev]"
+python -m pytest
+python -m ruff check src tests examples
+python -m ruff format --check src tests examples
 ```
 
-The test suite is anchored to closed-form results wherever possible rather than to previous outputs. Among the things it asserts:
+Some tests need extra tools or data and skip when those are missing: gcc/clang
+for compiled C, PyBaMM for an independent model comparison, the measured dataset,
+and the ARM toolchain/QEMU for embedded measurements. A passing run with skips
+does not mean those integrations were tested. See [VALIDATION.md](docs/VALIDATION.md)
+for the verification record for this update.
 
-- the exact series coefficients $1, \tfrac1{15}, -\tfrac1{525}, \tfrac2{23625}, -\tfrac{37}{9095625}$;
-- $\sum_k \lambda_k^{-2} = 1/10$ over the roots of $\tan\lambda = \lambda$, *and* that the residual shrinks as $1/\pi^2 k$;
-- the steady-state surface offset $RN/5D$ — exactly for the polynomial and residualised spectral models, converging at second order for finite volume;
-- that the mass balance is structurally exact for every model at every order;
-- that zero-order-hold discretisation is stable at $\Delta t = 100 R^2/D$;
-- that a rested cell's terminal voltage equals its open-circuit voltage to 1e-9 V;
-- that exchange current density lands in the physically plausible 0.1–30 A m⁻² band, which is the guard that caught a spurious Faraday constant collapsing the kinetic overpotential to microvolts;
-- that the unscented transform of the linear process reproduces $APA^\top$, and that tight sigma points lose precision doing so;
-- that the generated C matches its mirror to machine precision.
+Examples run from the repository root. Start with
+[charge estimation](examples/02_estimate_state_of_charge.py),
+[a measured-cell comparison](examples/10_against_a_real_cell.py), or
+[the complete calibration walkthrough](examples/12_new_cell_walkthrough.py).
 
-Where a finite-difference reference is used, the step size is chosen adaptively: with a state vector spanning `1e4` to `1e10` a fixed relative step makes the *reference* less accurate than the derivative it is checking, which is a uniquely misleading failure.
+## Project status
 
-Closed-form tests cannot catch a misunderstanding shared between a model and the test written by the same person, so a separate suite compares against PyBaMM. It needs `pip install pybamm` and skips without it.
+This is research software for battery modelling and estimation. Cell-specific calibration,
+unseen-cell validation and measurements on physical hardware remain necessary
+before considering a production application. Thermal and ageing parameters have
+documented limitations; model-based charging limits are not a safety certification.
 
-```bash
-pytest tests/test_pybamm_validation.py
-```
+Near-term work: validate the ML correction on additional cells and temperatures,
+complete electrolyte-model C export, and measure execution time on a physical board.
 
-Seventeen CI jobs run on every push: the suite on three operating systems and three Python versions, linting, coverage with a floor, every example end to end, the PyBaMM comparison, the comparison against a measured cell, a cross-compile to Cortex-M with instruction counting under QEMU, and the generated C compiled by both gcc and clang under conversion and shadowing warnings and then run under the undefined-behaviour and address sanitisers.
+Maintained by **Harisankar Suresh**. For bug reports, reproducibility questions,
+or proposed improvements, [open an issue](https://github.com/harisankarsuresh/cell_kernel/issues).
 
-## Citing
-
-If this is useful in published work, please cite it. See [`paper/paper.md`](paper/paper.md).
-
-## Licence
-
-BSD 3-Clause. See [`LICENSE`](LICENSE).
+BSD 3-Clause license. See [LICENSE](LICENSE).

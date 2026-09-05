@@ -1,0 +1,37 @@
+verification PASS  (float, 6 states, 900 samples, openloop, zig-cc.cmd)
+
+  code generation fidelity
+    generated C vs NumPy mirror, voltage   8.430e-06 V
+    generated C vs NumPy mirror, SoC       3.512e-07
+    mirror vs table-backed model, voltage  5.329e-15 V
+
+  deliberate approximation
+    lookup table vs analytic fit, voltage  5.841e-05 V  (0.058 mV)
+    table interpolation error, worst       4.952 mV
+
+  end to end
+    generated C vs full Python model        5.900e-05 V  (0.059 mV)
+
+verification PASS  (float, 6 states, 900 samples, filter, zig-cc.cmd)
+
+  code generation fidelity
+    generated C vs NumPy mirror, voltage   3.377e-06 V
+    generated C vs NumPy mirror, SoC       5.649e-06
+
+  the remaining legs are not evaluated in filter mode: the mirror
+  applies Kalman corrections while the comparison model runs open
+  loop, so the two are different algorithms and would diverge for
+  reasons that say nothing about code generation. Run open loop to
+  measure model fidelity, and filter mode to exercise the Kalman
+  path -- which the first leg above does.
+
+precision            float (4 bytes/word)
+states               6
+flash (tables only)  2584 B  (+ ~2.1 kB code on M4F -Os; measure it)
+RAM (per instance)   168 B
+stack (predict)      216 B
+arithmetic/step      564 mul, 522 add, 12 div, 6 sqrt, 2 log
+modelled cycles      1979
+estimated time       48 MHz: 41.2 us, 80 MHz: 24.7 us, 120 MHz: 16.5 us, 180 MHz: 11.0 us
+OCP table points     257 / 257
+OCP table error      4.952 mV

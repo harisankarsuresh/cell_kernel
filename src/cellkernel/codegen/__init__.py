@@ -1,15 +1,7 @@
 """Generate a self-contained C99 state estimator from a Python cell model.
 
-This is the part of :mod:`cellkernel` that does something the rest of the
-open-source battery ecosystem does not. PyBaMM simulates, PyBOP identifies
-parameters, and both are excellent at it -- but both stop at the Python boundary.
-Getting a physics-based estimator onto the microcontroller that actually runs a
-battery pack is left as an exercise, and in practice it is done by hand, in C, by
-someone translating equations from a paper. That translation is where the errors
-go in, and it is unverifiable after the fact.
-
-Here the translation is mechanical and the result is checked. One call produces a
-buildable C library plus a report:
+Extract model constants and emit a C implementation, then use
+:mod:`cellkernel.verify` to compile it and compare its outputs with Python.
 
 >>> from cellkernel.codegen import generate
 >>> from cellkernel.models import SPM

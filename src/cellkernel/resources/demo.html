@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Explore how a battery model recovers an incorrect charge estimate. A reproducible cellkernel experiment."
+    />
+    <title>cellkernel · Battery estimation, made visible</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172d36;
+        --muted: #4b626b;
+        --paper: #f4f6f3;
+        --line: #cdd8d4;
+        --teal: #067565;
+        --orange: #a6501e;
+        --blue: #3269ab;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font:
+          16px/1.6 system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+      a {
+        color: var(--teal);
+        text-underline-offset: 4px;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      button,
+      a,
+      input {
+        touch-action: manipulation;
+      }
+      :focus-visible {
+        outline: 3px solid var(--blue);
+        outline-offset: 4px;
+      }
+      .wrap {
+        max-width: 1160px;
+        margin: auto;
+        padding: 0 32px;
+      }
+      header {
+        border-bottom: 1px solid var(--line);
+      }
+      header .wrap {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        min-height: 80px;
+        gap: 24px;
+      }
+      .brand {
+        font-size: 24px;
+        letter-spacing: -1px;
+        font-weight: 760;
+      }
+      .brand span {
+        color: var(--teal);
+      }
+      nav {
+        display: flex;
+        gap: 24px;
+        align-items: center;
+        font-size: 14px;
+      }
+      nav a {
+        color: var(--ink);
+      }
+      .eyebrow {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        font-weight: 750;
+        color: var(--teal);
+      }
+      .hero {
+        display: grid;
+        grid-template-columns: 1.6fr 1fr;
+        gap: 54px;
+        padding: 52px 0 38px;
+        align-items: center;
+      }
+      h1 {
+        font-size: clamp(34px, 4.5vw, 56px);
+        line-height: 1.08;
+        letter-spacing: -2px;
+        margin: 14px 0 20px;
+        max-width: 740px;
+      }
+      h1 em {
+        font-style: normal;
+        color: var(--teal);
+      }
+      .intro {
+        color: var(--muted);
+        max-width: 650px;
+        margin: 0;
+        font-size: 17px;
+      }
+      .note {
+        padding: 22px 24px;
+        border-left: 3px solid var(--teal);
+        background: #e7eee9;
+        font-size: 14px;
+      }
+      .note strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+      .note p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .status {
+        display: inline-block;
+        font-size: 12px;
+        font-weight: 650;
+        background: #e4ece6;
+        border: 1px solid #bfcec4;
+        border-radius: 30px;
+        padding: 4px 12px;
+        margin-bottom: 12px;
+      }
+      .experiment {
+        background: white;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+      .controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding: 24px 28px 18px;
+        flex-wrap: wrap;
+      }
+      h2 {
+        font-size: 22px;
+        line-height: 1.3;
+        letter-spacing: -0.6px;
+        margin: 0;
+      }
+      .sub {
+        font-size: 13px;
+        color: var(--muted);
+        margin: 6px 0 0;
+      }
+      .switcher {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .switcher button {
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: white;
+        color: var(--muted);
+        padding: 9px 12px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .switcher button[aria-pressed="true"] {
+        background: var(--ink);
+        color: white;
+        border-color: var(--ink);
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        padding: 0 28px;
+        margin: 6px 0 20px;
+      }
+      .metric {
+        border-left: 1px solid var(--line);
+        padding: 4px 24px;
+      }
+      .metric:first-child {
+        border-left: 0;
+        padding-left: 0;
+      }
+      .metric span {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .metric strong {
+        font-size: 32px;
+        letter-spacing: -1px;
+        line-height: 1.5;
+        font-variant-numeric: tabular-nums;
+      }
+      .metric small {
+        font-size: 13px;
+        letter-spacing: 0;
+        font-weight: 450;
+      }
+      .metric:nth-child(2) strong {
+        color: var(--teal);
+      }
+      .chart-wrap {
+        padding: 0 18px 12px;
+      }
+      .legend {
+        display: flex;
+        gap: 22px;
+        flex-wrap: wrap;
+        margin: 0 10px 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .legend span:before {
+        content: "";
+        display: inline-block;
+        width: 22px;
+        border-top: 3px solid var(--ink);
+        margin-right: 7px;
+        vertical-align: middle;
+      }
+      .legend .estimate:before {
+        border-color: var(--teal);
+      }
+      .legend .counting:before {
+        border-color: var(--orange);
+        border-top-style: dashed;
+      }
+      .chart {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+      .grid {
+        stroke: #e7ece9;
+        stroke-width: 1;
+      }
+      .axis {
+        fill: var(--muted);
+        font: 12px system-ui;
+      }
+      .series {
+        fill: none;
+        stroke-width: 2.4;
+        vector-effect: non-scaling-stroke;
+      }
+      .truth {
+        stroke: var(--ink);
+        stroke-dasharray: 3 4;
+      }
+      .estimate-line {
+        stroke: var(--teal);
+        stroke-width: 2.6;
+      }
+      .count-line {
+        stroke: var(--orange);
+        stroke-dasharray: 8 6;
+      }
+      .scrub {
+        padding: 0 28px 24px;
+      }
+      .scrub label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        margin-bottom: 8px;
+      }
+      .scrub input {
+        width: 100%;
+        accent-color: var(--teal);
+        cursor: pointer;
+      }
+      .sample {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        color: var(--muted);
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+      }
+      .sample strong {
+        color: var(--ink);
+      }
+      .explain {
+        padding: 18px 28px;
+        background: #f2f6f2;
+        border-top: 1px solid var(--line);
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .explain strong {
+        color: var(--ink);
+      }
+      .details {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 38px;
+        margin: 34px 0;
+      }
+      .details p,
+      .details li {
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .details ol {
+        padding-left: 20px;
+      }
+      .details h2 {
+        font-size: 20px;
+      }
+      .code {
+        background: var(--ink);
+        color: #d1e8dc;
+        border-radius: 10px;
+        padding: 20px;
+        font:
+          13px/1.8 ui-monospace,
+          Consolas,
+          monospace;
+        overflow: auto;
+        white-space: pre;
+      }
+      .export {
+        display: flex;
+        gap: 18px;
+        font-size: 13px;
+        flex-wrap: wrap;
+        margin: 16px 0;
+      }
+      .foot {
+        border-top: 1px solid var(--line);
+        padding: 20px 0 30px;
+        font-size: 12px;
+        color: var(--muted);
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+      }
+      noscript {
+        display: block;
+        padding: 25px;
+        background: #fff2d9;
+      }
+      @media (max-width: 760px) {
+        .wrap {
+          padding: 0 18px;
+        }
+        header .wrap {
+          min-height: 68px;
+        }
+        nav {
+          gap: 12px;
+          font-size: 12px;
+        }
+        .hero {
+          grid-template-columns: 1fr;
+          gap: 24px;
+          padding: 30px 0;
+        }
+        .note {
+          padding: 16px 20px;
+        }
+        h1 {
+          letter-spacing: -1.2px;
+        }
+        .controls {
+          padding: 20px 18px;
+        }
+        .metrics {
+          padding: 0 18px;
+        }
+        .metric {
+          padding: 4px 12px;
+        }
+        .metric strong {
+          font-size: 25px;
+        }
+        .metric small {
+          font-size: 11px;
+        }
+        .metric span {
+          font-size: 11px;
+        }
+        .details {
+          grid-template-columns: 1fr;
+          gap: 20px;
+        }
+        .scrub {
+          padding: 0 18px 20px;
+        }
+        .legend {
+          gap: 12px;
+          font-size: 11px;
+        }
+        .explain {
+          padding: 16px 18px;
+        }
+        .foot {
+          flex-direction: column;
+          gap: 4px;
+        }
+        .chart-wrap {
+          overflow-x: auto;
+        }
+        .chart {
+          min-width: 530px;
+        }
+        .chart-wrap:focus-visible {
+          outline-offset: -4px;
+        }
+      }
+      .details > div {
+        min-width: 0;
+      }
+      .metrics {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      @media print {
+        .wrap {
+          max-width: none;
+        }
+        .hero {
+          padding-top: 20px;
+        }
+        .switcher,
+        .scrub input,
+        .export {
+          display: none;
+        }
+        .experiment {
+          break-inside: avoid;
+        }
+        .code {
+          white-space: pre-wrap;
+        }
+        .details {
+          break-inside: avoid;
+        }
+        a {
+          color: inherit;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="wrap">
+        <div class="brand">
+          cell<span>kernel</span><span aria-hidden="true">.</span>
+        </div>
+        <nav aria-label="Project">
+          <a href="https://github.com/harisankarsuresh/cell_kernel"
+            >Source code ↗</a
+          ><a href="#how">How it works</a>
+        </nav>
+      </div>
+    </header>
+    <main class="wrap">
+      <section class="hero" aria-labelledby="title">
+        <div>
+          <div class="eyebrow">
+            Battery models · State estimation · Embedded C
+          </div>
+          <h1>A battery gauge that<br /><em>finds its way back.</em></h1>
+          <p class="intro">
+            What if a battery is 75% charged, but its gauge says 90%? Watch a
+            physics-based estimator use voltage and current to correct the
+            mistake.
+          </p>
+        </div>
+        <aside class="note">
+          <span class="status">Reproducible synthetic experiment</span
+          ><strong>Three simulated scenarios</strong>
+          <p>
+            These curves come from running cellkernel in Python. Switch the
+            starting error or sensor noise, then inspect any point in the drive.
+            No battery hardware needed.
+          </p>
+        </aside>
+      </section>
+      <noscript
+        >Enable JavaScript to explore the charts. The accompanying
+        trajectories.csv and demo-data.json contain all results.</noscript
+      >
+      <section class="experiment" aria-labelledby="experiment-title">
+        <div class="controls">
+          <div>
+            <h2 id="experiment-title">Can the estimate recover?</h2>
+            <p class="sub">
+              30-minute simulated drive · 5 Ah lithium-ion cell · 25 °C
+            </p>
+          </div>
+          <div class="switcher" role="group" aria-label="Choose an experiment">
+            <button type="button" data-scenario="high" aria-pressed="true">
+              Starts high</button
+            ><button type="button" data-scenario="low" aria-pressed="false">
+              Starts low</button
+            ><button type="button" data-scenario="noisy" aria-pressed="false">
+              Noisy sensor
+            </button>
+          </div>
+        </div>
+        <div class="metrics" aria-live="polite" aria-atomic="true">
+          <div class="metric">
+            <span>Starting gauge error</span><strong id="start">—</strong
+            ><span>percentage points before correction</span>
+          </div>
+          <div class="metric">
+            <span>Estimator error, final 10 min</span
+            ><strong id="rmse">—</strong
+            ><span>root mean square error · percentage points</span>
+          </div>
+          <div class="metric">
+            <span>Counting alone, final 10 min</span
+            ><strong id="baseline">—</strong
+            ><span>same current, no voltage correction</span>
+          </div>
+        </div>
+        <div
+          class="chart-wrap"
+          tabindex="0"
+          role="region"
+          aria-label="Battery charge chart; scroll horizontally on narrow screens"
+        >
+          <div class="legend">
+            <span class="estimate">Corrected estimate</span
+            ><span>Simulated true charge</span
+            ><span class="counting">Counting alone</span>
+          </div>
+          <svg
+            id="chart"
+            class="chart"
+            viewBox="0 0 1060 330"
+            role="img"
+            aria-labelledby="chart-title chart-desc"
+          >
+            <title id="chart-title">Battery charge over time</title>
+            <desc id="chart-desc">
+              A model-based estimate and a current-counting baseline compared
+              with simulated true charge. Exact selected values appear below.
+            </desc>
+            <g id="grid"></g>
+            <text class="axis" x="64" y="19">State of charge (%)</text>
+            <text class="axis" x="540" y="324" text-anchor="middle">
+              Time (minutes)
+            </text>
+            <path id="counting" class="series count-line"></path>
+            <path id="truth" class="series truth"></path>
+            <path id="estimate" class="series estimate-line"></path>
+            <line
+              id="cursor"
+              y1="32"
+              y2="279"
+              stroke="#899e96"
+              stroke-dasharray="3 4"
+            ></line>
+          </svg>
+        </div>
+        <div class="scrub">
+          <label for="sample"
+            >Inspect the drive
+            <output id="time" for="sample">0:00</output></label
+          ><input
+            id="sample"
+            type="range"
+            min="0"
+            max="1799"
+            value="120"
+            step="1"
+          />
+          <div
+            class="sample"
+            aria-live="polite"
+            aria-atomic="true"
+            id="readout"
+          ></div>
+        </div>
+        <div class="explain" id="takeaway"></div>
+      </section>
+      <section id="how" class="details" aria-label="Method and exports">
+        <div>
+          <div class="eyebrow">01 / The estimation loop</div>
+          <h2>Use physics to predict. Use voltage to correct.</h2>
+          <ol>
+            <li>A small model tracks lithium moving inside the battery.</li>
+            <li>
+              An extended Kalman filter compares predicted voltage with a noisy
+              measurement.
+            </li>
+            <li>It adjusts the estimated charge and repeats every second.</li>
+          </ol>
+          <p>
+            <strong>What this proves:</strong> recovery under controlled
+            starting errors and noise. The same model creates the synthetic
+            measurements, so this does not establish accuracy on an actual cell.
+            The measured-data ML comparison is a separate experiment in the
+            repository.
+          </p>
+        </div>
+        <div>
+          <div class="eyebrow">02 / The path to a microcontroller</div>
+          <h2>Python model → self-contained C99</h2>
+          <pre class="code">
+cellkernel generate build/estimator --precision float
+cellkernel verify build/verified --precision float</pre
+          >
+          <p id="budget"></p>
+          <p>
+            The C export uses a single measurement update; this visual demo uses
+            three iterations. Generate and verify are separate steps. This page
+            does not claim a compiler or hardware test has passed.
+          </p>
+        </div>
+      </section>
+      <div class="export">
+        <a href="trajectories.csv" download>Download all samples (CSV)</a
+        ><a href="demo-data.json" download>Download experiment details (JSON)</a
+        ><a href="estimator/cellkernel_estimator.c" download
+          >Generated C source</a
+        ><a href="estimator/BUDGET.txt">Resource budget</a>
+      </div>
+    </main>
+    <footer class="wrap">
+      <div class="foot">
+        <span>cellkernel · Battery modelling and state estimation</span
+        ><span id="provenance"
+          >Fixed seeds · Offline · No external chart dependencies</span
+        >
+      </div>
+    </footer>
+    <!-- prettier-ignore -->
+    <script id="demo-data" type="application/json">__DEMO_DATA__</script>
+    <script>
+      "use strict";
+      const data = JSON.parse(document.getElementById("demo-data").textContent);
+      const el = (id) => document.getElementById(id);
+      let scenario = data.scenarios[0];
+      const ns = "http://www.w3.org/2000/svg";
+      const x = (t) => 64 + (t / data.duration_s) * 966;
+      let yMin = 0,
+        yMax = 100;
+      const y = (v) => 279 - ((v - yMin) / (yMax - yMin)) * 247;
+      function mark(name, attrs, text) {
+        const node = document.createElementNS(ns, name);
+        for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+        if (text !== undefined) node.textContent = text;
+        el("grid").append(node);
+      }
+      function path(values) {
+        return values
+          .map(
+            (v, i) =>
+              (i ? "L" : "M") +
+              x(scenario.time_s[i]).toFixed(2) +
+              "," +
+              y(v).toFixed(2),
+          )
+          .join(" ");
+      }
+      function inspect() {
+        const i = Number(el("sample").value),
+          t = scenario.time_s[i];
+        el("time").textContent =
+          Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
+        el("cursor").setAttribute("x1", x(t));
+        el("cursor").setAttribute("x2", x(t));
+        el("readout").replaceChildren();
+        for (const [label, value] of [
+          ["True charge", scenario.true_soc_pct[i].toFixed(2) + "%"],
+          ["Estimate", scenario.estimated_soc_pct[i].toFixed(2) + "%"],
+          ["Counting", scenario.counting_soc_pct[i].toFixed(2) + "%"],
+          ["Current", scenario.current_A[i].toFixed(2) + " A"],
+        ]) {
+          const span = document.createElement("span"),
+            strong = document.createElement("strong");
+          span.textContent = label + " ";
+          strong.textContent = value;
+          span.append(strong);
+          el("readout").append(span);
+        }
+      }
+      function render() {
+        const all = [
+          ...scenario.true_soc_pct,
+          ...scenario.counting_soc_pct,
+          ...scenario.estimated_soc_pct,
+        ];
+        yMin = Math.min(0, Math.floor(Math.min(...all) / 20) * 20);
+        yMax = Math.max(100, Math.ceil(Math.max(...all) / 20) * 20);
+        el("grid").replaceChildren();
+        for (let v = yMin; v <= yMax; v += 20) {
+          mark("line", { x1: 64, x2: 1030, y1: y(v), y2: y(v), class: "grid" });
+          mark(
+            "text",
+            { x: 50, y: y(v) + 4, "text-anchor": "end", class: "axis" },
+            v,
+          );
+        }
+        for (let m = 0; m <= 30; m += 5) {
+          mark(
+            "text",
+            { x: x(m * 60), y: 301, "text-anchor": "middle", class: "axis" },
+            m,
+          );
+        }
+        el("truth").setAttribute("d", path(scenario.true_soc_pct));
+        el("estimate").setAttribute("d", path(scenario.estimated_soc_pct));
+        el("counting").setAttribute("d", path(scenario.counting_soc_pct));
+        el("start").textContent =
+          (scenario.initial_error_pp > 0 ? "+" : "") +
+          scenario.initial_error_pp.toFixed(0) +
+          " pp";
+        el("rmse").textContent = scenario.settled_rmse_pp.toFixed(2) + " pp";
+        el("baseline").textContent =
+          scenario.counting_rmse_pp.toFixed(2) + " pp";
+        el("takeaway").textContent =
+          "The gauge starts at " +
+          scenario.initial_soc_pct.toFixed(0) +
+          "% while the simulated battery is at 75%. Voltage noise is " +
+          scenario.noise_mV.toFixed(0) +
+          " mV. Counting current preserves the starting error; voltage feedback lets the estimator correct it. Lower error is better.";
+        el("chart-desc").textContent =
+          scenario.label +
+          ". Over the final ten minutes, estimator error is " +
+          scenario.settled_rmse_pp.toFixed(2) +
+          " percentage points RMS; counting error is " +
+          scenario.counting_rmse_pp.toFixed(2) +
+          ". This is synthetic data.";
+        for (const button of document.querySelectorAll("[data-scenario]"))
+          button.setAttribute(
+            "aria-pressed",
+            String(button.dataset.scenario === scenario.id),
+          );
+        el("sample").max = scenario.time_s.length - 1;
+        inspect();
+      }
+      for (const button of document.querySelectorAll("[data-scenario]"))
+        button.addEventListener("click", () => {
+          scenario = data.scenarios.find(
+            (s) => s.id === button.dataset.scenario,
+          );
+          render();
+        });
+      el("sample").addEventListener("input", inspect);
+      el("budget").textContent =
+        data.c_export.states +
+        " states · " +
+        data.c_export.ram_per_instance_bytes +
+        " bytes of per-instance state and covariance in float precision, plus stack. This counts data structures; total firmware memory and execution time need separate measurement.";
+      render();
+    </script>
+  </body>
+</html>
